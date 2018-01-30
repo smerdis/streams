@@ -1,2 +1,2 @@
-# bids_formatter
-Tools for converting existing Silverlab datasets to BIDS format
+# Streams project 
+Umbrella repository for code compriing the streams project
