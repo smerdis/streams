@@ -80,6 +80,21 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
 
     return bolds, masks, eventfiles, TR
 
+def get_hemifield_contrasts():
+    """
+    Setup the contrast structure that needs to be evaluated. This is a list of
+    lists. The inner list specifies the contrasts and has the following format -
+    [Name,Stat,[list of condition names],[weights on those conditions]. The
+    condition names must match the `names` listed in the `subjectinfo` function
+    described above.
+    """
+
+    cont_lr = ['L-R', 'T', ['L', 'R'], [1, -1]]
+    cont_rl = ['R-L', 'T', ['L', 'R'], [-1, 1]]
+    cont_visresp = ['Task>Baseline', 'T', ['L', 'R'], [0.5, 0.5]]
+    contrasts = [cont_lr, cont_rl, cont_visresp]
+    return contrasts
+
 def get_files_spm(subject_id, session, task, raw_data_dir):
     """
     Given some information, retrieve all the files and metadata from a

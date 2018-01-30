@@ -107,18 +107,7 @@ BIDSDataGrabber.inputs.subject_id='MS'
 BIDSDataGrabber.inputs.session='20150401'
 BIDSDataGrabber.inputs.task='hemi'
 
-"""
-Setup the contrast structure that needs to be evaluated. This is a list of
-lists. The inner list specifies the contrasts and has the following format -
-[Name,Stat,[list of condition names],[weights on those conditions]. The
-condition names must match the `names` listed in the `subjectinfo` function
-described above.
-"""
-
-cont_lr = ['L-R', 'T', ['L', 'R'], [1, -1]]
-cont_rl = ['R-L', 'T', ['L', 'R'], [-1, 1]]
-cont_visresp = ['Task>Baseline', 'T', ['L', 'R'], [0.5, 0.5]]
-contrasts = [cont_lr, cont_rl, cont_visresp]
+contrasts = utils.get_hemifield_contrasts()
 
 modelfit.inputs.modelspec.input_units = 'secs'
 modelfit.inputs.modelspec.high_pass_filter_cutoff = 128.
@@ -151,17 +140,7 @@ hemi_wf.connect([
                                               ('TR', 'level1design.interscan_interval')])
                     ])
 
-"""
-Execute the pipeline
---------------------
-
-The code discussed above sets up all the necessary data structures with
-appropriate parameters and the connectivity between the processes, but does not
-generate any output. To actually run the analysis on the data the
-``nipype.pipeline.engine.Pipeline.Run`` function needs to be called.
-"""
-
 if __name__ == '__main__':
     hemi_wf.write_graph()
-    outgraph = hemi_wf.run(plugin='MultiProc', plugin_args={'n_procs':3})
-    # hemi_wf.run(plugin='MultiProc', plugin_args={'n_procs':2})
+    #outgraph = hemi_wf.run(plugin='MultiProc', plugin_args={'n_procs':3})
+    outgraph = hemi_wf.run(plugin='Linear') # Easier to debug for the moment
