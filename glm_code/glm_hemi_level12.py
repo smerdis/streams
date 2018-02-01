@@ -23,38 +23,15 @@ modelfit = pe.Workflow(name='modelfit')
 #inputs are defined below in "experiment-specific details"
 tsv2subjinfo = pe.MapNode(util.Function(function=utils.tsv2subjectinfo, input_names=['in_file'],
                          output_names=['subject_info']), name="tsv2subjinfo", iterfield=['in_file'])
-
-"""
-Use :class:`nipype.algorithms.modelgen.SpecifyModel` to generate design information.
-"""
-
 modelspec = pe.MapNode(interface=model.SpecifyModel(), name="modelspec", iterfield=['subject_info'])
-
-"""
-Use :class:`nipype.interfaces.fsl.Level1Design` to generate a run specific fsf
-file for analysis
-"""
-
 level1design = pe.MapNode(interface=fsl.Level1Design(), name="level1design", iterfield=['session_info'])
-
-"""
-Use :class:`nipype.interfaces.fsl.FEATModel` to generate a run specific mat
-file for use by FILMGLS
-"""
-
 modelgen = pe.MapNode(interface=fsl.FEATModel(), name='modelgen', iterfield=["fsf_file", "ev_files"])
 
+applymask = pe.MapNode(interface=fsl.ApplyMask(), name="applymask", iterfield=["in_file", "mask_file"])
 
-"""
-Use :class:`nipype.interfaces.fsl.FILMGLS` to estimate a model specified by a
-mat file and a functional run
-"""
 
-modelestimate = pe.MapNode(interface=fsl.FILMGLS(smooth_autocorr=True,
-                                                 mask_size=5,
-                                                 threshold=1000),
-                           name='modelestimate',
-                           iterfield=['design_file', 'in_file', 'tcon_file'])
+modelestimate = pe.MapNode(interface=fsl.FILMGLS(smooth_autocorr=True, mask_size=5, threshold=1000),
+                           name='modelestimate', iterfield=['design_file', 'in_file', 'tcon_file'])
 
 modelfit.connect([
     (tsv2subjinfo, modelspec, [('subject_info', 'subject_info')]),
@@ -62,34 +39,11 @@ modelfit.connect([
     (level1design, modelgen, [('fsf_files', 'fsf_file'),
                               ('ev_files', 'ev_files')]),
     (modelgen, modelestimate, [('design_file', 'design_file'),
-                              ('con_file','tcon_file')])
+                              ('con_file','tcon_file')]),
+    (applymask, modelestimate, [('out_file', 'in_file')])
     ])
 
-"""
-Set up first-level workflow
----------------------------
-
-"""
-def sort_copes(files):
-    numelements = len(files[0])
-    outfiles = []
-    for i in range(numelements):
-        outfiles.insert(i, [])
-        for j, elements in enumerate(files):
-            outfiles[i].append(elements[i])
-    return outfiles
-
-
-def num_copes(files):
-    return len(files)
-
-
-"""
-Experiment specific components
-------------------------------
-
-"""
-
+# Experiment-specific information
 BIDSDataGrabber = pe.Node(util.Function(function=utils.get_files, 
                                     input_names=["subject_id", "session", "task", "raw_data_dir", "preprocessed_data_dir"],
                                     output_names=["bolds", "masks", "events", "TR"]), 
@@ -100,6 +54,8 @@ BIDSDataGrabber = pe.Node(util.Function(function=utils.get_files,
 raw_data_dir = os.path.abspath('/Users/smerdis/data/LGN/BIDS/AlexLGN_no0327/')
 # preprocessed data - these are the files that should be modeled
 preprocessed_data_dir = os.path.abspath('/Users/smerdis/data/LGN/BIDS/AlexLGN_no0327_out_T1w/fmriprep/')
+# where intermediate outputs etc are stored
+working_dir = os.path.abspath('/Users/smerdis/data/LGN/BIDS/AlexLGN_no0327_out_T1w/nipype/')
 
 BIDSDataGrabber.inputs.raw_data_dir = raw_data_dir
 BIDSDataGrabber.inputs.preprocessed_data_dir = preprocessed_data_dir
@@ -116,14 +72,9 @@ modelfit.inputs.level1design.bases = {'dgamma': {'derivs': False}}
 modelfit.inputs.level1design.contrasts = contrasts
 modelfit.inputs.level1design.model_serial_correlations = True
 
-"""
-Set up complete workflow
-========================
-"""
-
 hemi_wf = pe.Workflow(name="hemifield_localizer")
-hemi_wf.base_dir = os.path.abspath('./fsl/workingdir')
-hemi_wf.config = {"execution": {"crashdump_dir": os.path.abspath('./fsl/crashdumps')}}
+hemi_wf.base_dir = working_dir
+hemi_wf.config = {"execution": {"crashdump_dir": os.path.join(working_dir, 'crashdumps')}}
 
 datasink = pe.Node(nio.DataSink(), name='datasink')
 
@@ -135,7 +86,8 @@ modelfit.connect([
 hemi_wf.connect([
                     (BIDSDataGrabber, modelfit, [('events', 'tsv2subjinfo.in_file'),
                                               ('bolds', 'modelspec.functional_runs'),
-                                              ('bolds', 'modelestimate.in_file'),
+                                              ('bolds', 'applymask.in_file'),
+                                              ('masks', 'applymask.mask_file'),
                                               ('TR', 'modelspec.time_repetition'),
                                               ('TR', 'level1design.interscan_interval')])
                     ])

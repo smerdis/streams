@@ -32,6 +32,18 @@ def tsv2subjectinfo(in_file, exclude=None):
 def pickfirst(l):
     return l[0]
 
+def sort_copes(files):
+    numelements = len(files[0])
+    outfiles = []
+    for i in range(numelements):
+        outfiles.insert(i, [])
+        for j, elements in enumerate(files):
+            outfiles[i].append(elements[i])
+    return outfiles
+
+def num_copes(files):
+    return len(files)
+
 def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
     """
     Given some information, retrieve all the files and metadata from a
@@ -44,35 +56,26 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
     preproc_layout = BIDSLayout(preprocessed_data_dir)
 
     subjects = preproc_layout.get_subjects()
-    assert(subject_id in subjects and subject_id in raw_layout.get_subjects())
+    assert subject_id in subjects and subject_id in raw_layout.get_subjects(), "Subject not found!"
 
     sessions = preproc_layout.get_sessions()
-    assert(session in sessions)
+    assert session in sessions, "Session not found!"
 
     tasks = preproc_layout.get_tasks()
-    assert(task in tasks)
+    assert task in tasks, "Task not found!"
 
     print(subjects, tasks, sessions)
     
     bolds = [f.filename for f in preproc_layout.get(subject=subject_id, modality='func', type='preproc', 
                               session=session, task=task, extensions=['nii.gz'])]
-    print(bolds, sep="\n", end="\n")
-
     masks = [f.filename for f in preproc_layout.get(subject=subject_id, modality='func', type='brainmask', 
                               session=session, task=task, extensions=['nii.gz'])]
-    print(masks, sep="\n", end="\n")
-
     eventfiles =  [f.filename for f in raw_layout.get(subject=subject_id, modality="func",
                               task=task, session=session, extensions=['tsv'])]
-    print(eventfiles, sep="\n", end="\n")
-
     TRs = [raw_layout.get_metadata(f.filename)['RepetitionTime'] for f in raw_layout.get(subject=subject_id,
-      type="bold", modality="func", task=task, session=session, 
-      extensions=['nii.gz'])]
-    print(TRs, sep="\n", end="\n")
-
-    assert(len(bolds)==len(masks)==len(eventfiles)==len(TRs)>0)
-    assert(TRs.count(TRs[0])==len(TRs)) # all runs for a particular task must have the same TR
+                              modality="func", task=task, session=session, extensions=['nii.gz'])]
+    assert len(bolds)==len(masks)==len(eventfiles)==len(TRs)>0, "Input lists are not the same length!"
+    assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have the same TR
 
     TR = TRs[0]
 
