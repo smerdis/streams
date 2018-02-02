@@ -63,8 +63,6 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
 
     tasks = preproc_layout.get_tasks()
     assert task in tasks, "Task not found!"
-
-    print(subjects, tasks, sessions)
     
     bolds = [f.filename for f in preproc_layout.get(subject=subject_id, modality='func', type='preproc', 
                               session=session, task=task, extensions=['nii.gz'])]
@@ -75,7 +73,7 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
     TRs = [raw_layout.get_metadata(f.filename)['RepetitionTime'] for f in raw_layout.get(subject=subject_id,
                               modality="func", task=task, session=session, extensions=['nii.gz'])]
     assert len(bolds)==len(masks)==len(eventfiles)==len(TRs)>0, "Input lists are not the same length!"
-    assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have the same TR
+    assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have same TR
 
     TR = TRs[0]
 

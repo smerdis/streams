@@ -12,6 +12,8 @@ import nipype.interfaces.utility as util     # utility
 import nipype.pipeline.engine as pe          # pypeline engine
 import nipype.algorithms.modelgen as model   # model generation
 
+from nipype.interfaces.nipy.preprocess import Trim # Trim leading and trailing volumes
+
 import utils
 
 fsl.FSLCommand.set_default_output_type('NIFTI_GZ')
@@ -27,19 +29,21 @@ modelspec = pe.MapNode(interface=model.SpecifyModel(), name="modelspec", iterfie
 level1design = pe.MapNode(interface=fsl.Level1Design(), name="level1design", iterfield=['session_info'])
 modelgen = pe.MapNode(interface=fsl.FEATModel(), name='modelgen', iterfield=["fsf_file", "ev_files"])
 
+trim = pe.MapNode(interface=Trim(), name="trim", iterfield=['in_file'])
 applymask = pe.MapNode(interface=fsl.ApplyMask(), name="applymask", iterfield=["in_file", "mask_file"])
 
-
-modelestimate = pe.MapNode(interface=fsl.FILMGLS(smooth_autocorr=True, mask_size=5, threshold=1000),
-                           name='modelestimate', iterfield=['design_file', 'in_file', 'tcon_file'])
+modelestimate = pe.MapNode(interface=fsl.FILMGLS(), name='modelestimate',
+                        iterfield=['design_file', 'in_file', 'tcon_file'])
 
 modelfit.connect([
     (tsv2subjinfo, modelspec, [('subject_info', 'subject_info')]),
+    (trim, modelspec, [('out_file', 'functional_runs')]),
     (modelspec, level1design, [('session_info', 'session_info')]),
     (level1design, modelgen, [('fsf_files', 'fsf_file'),
                               ('ev_files', 'ev_files')]),
     (modelgen, modelestimate, [('design_file', 'design_file'),
                               ('con_file','tcon_file')]),
+    (trim, applymask, [('out_file', 'in_file')]),
     (applymask, modelestimate, [('out_file', 'in_file')])
     ])
 
@@ -65,12 +69,21 @@ BIDSDataGrabber.inputs.task='hemi'
 
 contrasts = utils.get_hemifield_contrasts()
 
+# How many volumes to trim from the functional run before masking and preprocessing
+modelfit.inputs.trim.begin_index = 6
+modelfit.inputs.trim.end_index = -1
+
 modelfit.inputs.modelspec.input_units = 'secs'
 modelfit.inputs.modelspec.high_pass_filter_cutoff = 128.
 
 modelfit.inputs.level1design.bases = {'dgamma': {'derivs': False}}
 modelfit.inputs.level1design.contrasts = contrasts
 modelfit.inputs.level1design.model_serial_correlations = True
+modelfit.inputs.level1design.interscan_interval = modelfit.inputs.modelspec.time_repetition
+
+modelfit.inputs.modelestimate.smooth_autocorr = True
+modelfit.inputs.modelestimate.mask_size = 5
+modelfit.inputs.modelestimate.threshold = 1000
 
 hemi_wf = pe.Workflow(name="hemifield_localizer")
 hemi_wf.base_dir = working_dir
@@ -85,8 +98,7 @@ modelfit.connect([
 
 hemi_wf.connect([
                     (BIDSDataGrabber, modelfit, [('events', 'tsv2subjinfo.in_file'),
-                                              ('bolds', 'modelspec.functional_runs'),
-                                              ('bolds', 'applymask.in_file'),
+                                              ('bolds', 'trim.in_file'),
                                               ('masks', 'applymask.mask_file'),
                                               ('TR', 'modelspec.time_repetition'),
                                               ('TR', 'level1design.interscan_interval')])
@@ -94,5 +106,5 @@ hemi_wf.connect([
 
 if __name__ == '__main__':
     hemi_wf.write_graph()
-    #outgraph = hemi_wf.run(plugin='MultiProc', plugin_args={'n_procs':3})
-    outgraph = hemi_wf.run(plugin='Linear') # Easier to debug for the moment
+    outgraph = hemi_wf.run(plugin='MultiProc', plugin_args={'n_procs':3})
+    #outgraph = hemi_wf.run(plugin='Linear') # Easier to debug for the moment
