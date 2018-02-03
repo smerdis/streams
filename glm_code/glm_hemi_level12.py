@@ -78,11 +78,10 @@ modelfit.inputs.modelspec.high_pass_filter_cutoff = 128.
 modelfit.inputs.level1design.bases = {'dgamma': {'derivs': False}}
 modelfit.inputs.level1design.contrasts = contrasts
 modelfit.inputs.level1design.model_serial_correlations = True
-modelfit.inputs.level1design.interscan_interval = modelfit.inputs.modelspec.time_repetition
 
 modelfit.inputs.modelestimate.smooth_autocorr = True
 modelfit.inputs.modelestimate.mask_size = 5
-modelfit.inputs.modelestimate.threshold = 10
+modelfit.inputs.modelestimate.threshold = 0 # 0 is nipype default, setting until intensity normalization is decided
 
 hemi_wf = pe.Workflow(name="hemifield_localizer")
 hemi_wf.base_dir = working_dir
