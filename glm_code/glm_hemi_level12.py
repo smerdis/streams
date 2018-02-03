@@ -18,11 +18,10 @@ import utils
 
 fsl.FSLCommand.set_default_output_type('NIFTI_GZ')
 
-#Set up model fitting workflow (we assume preprocessing has been done separately)
+#Set up model fitting workflow (we assume data has been preprocessed with fmriprep)
 modelfit = pe.Workflow(name='modelfit')
 
 #Custom interface wrapping function Tsv2subjectinfo
-#inputs are defined below in "experiment-specific details"
 tsv2subjinfo = pe.MapNode(util.Function(function=utils.tsv2subjectinfo, input_names=['in_file'],
                          output_names=['subject_info']), name="tsv2subjinfo", iterfield=['in_file'])
 modelspec = pe.MapNode(interface=model.SpecifyModel(), name="modelspec", iterfield=['subject_info'])
@@ -47,7 +46,7 @@ modelfit.connect([
     (applymask, modelestimate, [('out_file', 'in_file')])
     ])
 
-# Experiment-specific information
+# Data input and configuration!
 BIDSDataGrabber = pe.Node(util.Function(function=utils.get_files, 
                                     input_names=["subject_id", "session", "task", "raw_data_dir", "preprocessed_data_dir"],
                                     output_names=["bolds", "masks", "events", "TR"]), 
@@ -83,12 +82,13 @@ modelfit.inputs.level1design.interscan_interval = modelfit.inputs.modelspec.time
 
 modelfit.inputs.modelestimate.smooth_autocorr = True
 modelfit.inputs.modelestimate.mask_size = 5
-modelfit.inputs.modelestimate.threshold = 1000
+modelfit.inputs.modelestimate.threshold = 10
 
 hemi_wf = pe.Workflow(name="hemifield_localizer")
 hemi_wf.base_dir = working_dir
 hemi_wf.config = {"execution": {"crashdump_dir": os.path.join(working_dir, 'crashdumps')}}
 
+# output
 datasink = pe.Node(nio.DataSink(), name='datasink')
 
 modelfit.connect([
