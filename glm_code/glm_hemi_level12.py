@@ -93,7 +93,8 @@ datasink = pe.Node(nio.DataSink(), name='datasink')
 
 modelfit.connect([
   (modelgen, datasink, [('design_image', 'design_image'), ('design_file', 'design_file')]),
-  (modelestimate, datasink, [('results_dir', 'results_dir')])
+  (modelestimate, datasink, [('results_dir', 'results_dir')]),
+  (applymask, datasink, [('out_file', 'epi_masked_trimmed')])
 ])
 
 hemi_wf.connect([
