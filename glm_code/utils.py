@@ -93,8 +93,13 @@ def get_hemifield_contrasts():
     cont_lr = ['L-R', 'T', ['L', 'R'], [1, -1]]
     cont_rl = ['R-L', 'T', ['L', 'R'], [-1, 1]]
     cont_visresp = ['Task>Baseline', 'T', ['L', 'R'], [0.5, 0.5]]
-    contrasts = [cont_lr, cont_rl, cont_visresp]
-    return contrasts
+    return [cont_lr, cont_rl, cont_visresp]
+
+def get_mp_contrasts():
+    cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
+    cont_pm = ['P-M', 'T', ['M', 'P'], [-1, 1]]
+    cont_visresp = ['Task>Baseline', 'T', ['M', 'P'], [0.5, 0.5]]
+    return [cont_mp, cont_pm, cont_visresp]
 
 def get_files_spm(subject_id, session, task, raw_data_dir):
     """
