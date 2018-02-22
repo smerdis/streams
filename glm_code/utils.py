@@ -37,7 +37,7 @@ def tsv2subjectinfo(events_file, confounds_file=None, exclude=None, trim_indices
 
     # Confounds next
     confounds = pd.read_csv(confounds_file, sep="\t", na_values="n/a") # fmriprep confounds file
-    regressor_names=['FramewiseDisplacement',
+    regressor_names=['WhiteMatter', 'GlobalSignal','FramewiseDisplacement',
                         'aCompCor00',
                         'aCompCor01',
                         'aCompCor02',

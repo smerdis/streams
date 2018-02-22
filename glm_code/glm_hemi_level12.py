@@ -4,7 +4,7 @@
 from builtins import str
 from builtins import range
 
-import os                                    # system functions
+import os, datetime
 
 import nipype.interfaces.io as nio           # Data i/o
 import nipype.interfaces.fsl as fsl          # fsl
@@ -14,7 +14,7 @@ import nipype.algorithms.modelgen as model   # model generation
 
 from nipype.interfaces.nipy.preprocess import Trim # Trim leading and trailing volumes
 
-import utils
+import utils # code by AM specific to this project but multiple workflows
 
 fsl.FSLCommand.set_default_output_type('NIFTI_GZ')
 
@@ -76,7 +76,11 @@ raw_data_dir = os.path.abspath('/Users/smerdis/data/LGN/BIDS/AlexLGN_no0327/')
 # preprocessed data - these are the files that should be modeled
 preprocessed_data_dir = os.path.abspath('/Users/smerdis/data/LGN/BIDS/AlexLGN_no0327_out_T1w/fmriprep/')
 # where intermediate outputs etc are stored
-working_dir = os.path.abspath('/Users/smerdis/data/LGN/BIDS/AlexLGN_no0327_out_T1w/nipype/')
+# by creating a unique one each time, we prevent re-use,
+# which is desirable while testing different processing options and keeping them all
+# but maybe should be changed to a flag or option later (TODO)
+now = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+working_dir = os.path.abspath(f"/Users/smerdis/data/LGN/BIDS/AlexLGN_no0327_out_T1w/nipype_{now}/")
 
 BIDSDataGrabber.inputs.raw_data_dir = raw_data_dir
 BIDSDataGrabber.inputs.preprocessed_data_dir = preprocessed_data_dir
@@ -103,7 +107,7 @@ modelfit.inputs.modelestimate.smooth_autocorr = True
 modelfit.inputs.modelestimate.mask_size = 5
 modelfit.inputs.modelestimate.threshold = 0 # 0 is nipype default, setting until intensity normalization is decided
 
-hemi_wf = pe.Workflow(name="hemifield_localizer")
+hemi_wf = pe.Workflow(name="hemifield")
 hemi_wf.base_dir = working_dir
 hemi_wf.config = {"execution": {"crashdump_dir": os.path.join(working_dir, 'crashdumps')}}
 
