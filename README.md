@@ -1,2 +1,2 @@
 # Streams project 
-Umbrella repository for code compriing the streams project
+Umbrella repository for code comprising the streams/LGN project
