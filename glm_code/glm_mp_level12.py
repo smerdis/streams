@@ -22,8 +22,8 @@ fsl.FSLCommand.set_default_output_type('NIFTI_GZ')
 modelfit = pe.Workflow(name='modelfit')
 
 #Custom interface wrapping function Tsv2subjectinfo
-tsv2subjinfo = pe.MapNode(util.Function(function=utils.tsv2subjectinfo, input_names=['in_file'],
-                         output_names=['subject_info']), name="tsv2subjinfo", iterfield=['in_file'])
+tsv2subjinfo = pe.MapNode(util.Function(function=utils.tsv2subjectinfo, input_names=['events_file', 'exclude', 'confounds_file', 'trim_indices'],
+                         output_names=['subject_info']), name="tsv2subjinfo", iterfield=['events_file', 'confounds_file'])
 modelspec = pe.MapNode(interface=model.SpecifyModel(), name="modelspec", iterfield=['subject_info'])
 level1design = pe.MapNode(interface=fsl.Level1Design(), name="level1design", iterfield=['session_info'])
 modelgen = pe.MapNode(interface=fsl.FEATModel(), name='modelgen', iterfield=["fsf_file", "ev_files"])
@@ -67,7 +67,7 @@ modelfit.connect([
 # Data input and configuration!
 BIDSDataGrabber = pe.Node(util.Function(function=utils.get_files, 
       input_names=["subject_id", "session", "task", "raw_data_dir", "preprocessed_data_dir"],
-      output_names=["bolds", "masks", "events", "TR"]), 
+      output_names=["bolds", "masks", "events", "TR", "confounds"]), 
       name="BIDSDataGrabber")
 
 # Specify the location of the data.
@@ -87,6 +87,8 @@ BIDSDataGrabber.inputs.task='mp'
 contrasts = utils.get_mp_contrasts()
 
 # How many volumes to trim from the functional run before masking and preprocessing
+modelfit.inputs.tsv2subjinfo.exclude = None
+modelfit.inputs.tsv2subjinfo.trim_indices = (6, -1)
 modelfit.inputs.trim.begin_index = 6
 modelfit.inputs.trim.end_index = -1
 
@@ -116,7 +118,8 @@ modelfit.connect([
 ])
 
 hemi_wf.connect([
-                    (BIDSDataGrabber, modelfit, [('events', 'tsv2subjinfo.in_file'),
+                    (BIDSDataGrabber, modelfit, [('events', 'tsv2subjinfo.events_file'),
+                                              ('confounds', 'tsv2subjinfo.confounds_file'),
                                               ('bolds', 'trim.in_file'),
                                               ('masks', 'applymask.mask_file'),
                                               ('masks', 'maskemerge.in_files'),
