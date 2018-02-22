@@ -22,52 +22,45 @@ def tsv2subjectinfo(events_file, confounds_file=None, exclude=None, trim_indices
     from nipype.interfaces.base import Bunch
     import numpy as np
 
+    # Events first
     events = pd.read_csv(events_file, sep="\t")
-    confounds = pd.read_csv(confounds_file, sep="\t", na_values="n/a") # fmriprep confounds file
-
     if exclude is not None:  # not tested
         events.drop(exclude, axis=1, inplace=True)
 
     conditions = sorted(events['trial_type'].unique())
     onsets = [events['onset'][events['trial_type'] == tt].tolist() for tt in conditions]
-    durations = [events['duration'][events['trial_type'] == tt].tolist() for tt in conditions]
-    
+    durations = [events['duration'][events['trial_type'] == tt].tolist() for tt in conditions]   
     if 'weight' in events.columns:
       amplitudes = [events['weight'][events['trial_type'] == tt].tolist() for tt in conditions]
     else:
       amplitudes = [np.ones(len(d)) for d in durations]
 
-    # confounds are provided on a per-volume basis, so we expect trim indices in TRs, not seconds.
-    if trim_indices is not None:
-        regressors=[list(confounds.FramewiseDisplacement.fillna(0)[slice(*trim_indices)]),
-                         list(confounds.aCompCor00[slice(*trim_indices)]),
-                         list(confounds.aCompCor01[slice(*trim_indices)]),
-                         list(confounds.aCompCor02[slice(*trim_indices)]),
-                         list(confounds.aCompCor03[slice(*trim_indices)]),
-                         list(confounds.aCompCor04[slice(*trim_indices)]),
-                         list(confounds.aCompCor05[slice(*trim_indices)]),
-                        ]
+    # Confounds next
+    confounds = pd.read_csv(confounds_file, sep="\t", na_values="n/a") # fmriprep confounds file
+    regressor_names=['FramewiseDisplacement',
+                        'aCompCor00',
+                        'aCompCor01',
+                        'aCompCor02',
+                        'aCompCor03',
+                        'aCompCor04',
+                        'aCompCor05',
+                        'X',
+                        'Y',
+                        'Z',
+                        'RotX',
+                        'RotY',
+                        'RotZ']
+
+    if trim_indices is None:
+        regressors = [list(confounds[reg].fillna(0)) for reg in regressor_names]
     else:
-        regressors=[list(confounds.FramewiseDisplacement.fillna(0)),
-                         list(confounds.aCompCor00),
-                         list(confounds.aCompCor01),
-                         list(confounds.aCompCor02),
-                         list(confounds.aCompCor03),
-                         list(confounds.aCompCor04),
-                         list(confounds.aCompCor05),
-                        ]
+        regressors = [list(confounds[reg].fillna(0))[slice(*trim_indices)] for reg in regressor_names]
 
     bunch = Bunch(conditions=conditions,
                     onsets=onsets,
                     durations=durations,
                     amplitudes=amplitudes,
-                    regressor_names=['FramewiseDisplacement',
-                              'aCompCor0',
-                              'aCompCor1',
-                              'aCompCor2',
-                              'aCompCor3',
-                              'aCompCor4',
-                              'aCompCor5'],
+                    regressor_names=regressor_names,
                     regressors=regressors)
     
     return bunch
