@@ -110,16 +110,18 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
                               modality="func", task=task, session=session, extensions=['nii.gz'])]
     confounds = [f.filename for f in preproc_layout.get(subject=subject_id, type="confounds",
                               task=task, session=session, extensions=['tsv'])]
+
+    print(list(zip(bolds, masks, eventfiles, TRs)))
+
     assert len(bolds)==len(masks)==len(eventfiles)==len(TRs)==len(confounds)>0, "Input lists are not the same length!"
     assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have same TR
 
     TR = TRs[0]
 
-    print(list(zip(bolds, masks, eventfiles, TRs)))
 
     return bolds, masks, eventfiles, TR, confounds
 
-def get_hemifield_contrasts():
+def get_contrasts(task):
     """
     Setup the contrast structure that needs to be evaluated. This is a list of
     lists. The inner list specifies the contrasts and has the following format -
@@ -127,17 +129,16 @@ def get_hemifield_contrasts():
     condition names must match the `names` listed in the `subjectinfo` function
     described above.
     """
-
-    cont_lr = ['L-R', 'T', ['L', 'R'], [1, -1]]
-    cont_rl = ['R-L', 'T', ['L', 'R'], [-1, 1]]
-    cont_visresp = ['Task>Baseline', 'T', ['L', 'R'], [0.5, 0.5]]
-    return [cont_lr, cont_rl, cont_visresp]
-
-def get_mp_contrasts():
-    cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
-    cont_pm = ['P-M', 'T', ['M', 'P'], [-1, 1]]
-    cont_visresp = ['Task>Baseline', 'T', ['M', 'P'], [0.5, 0.5]]
-    return [cont_mp, cont_pm, cont_visresp]
+    if task == "hemi":
+        cont_lr = ['L-R', 'T', ['L', 'R'], [1, -1]]
+        cont_rl = ['R-L', 'T', ['L', 'R'], [-1, 1]]
+        cont_visresp = ['Task>Baseline', 'T', ['L', 'R'], [0.5, 0.5]]
+        return [cont_lr, cont_rl, cont_visresp]
+    elif task == "mp":
+        cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
+        cont_pm = ['P-M', 'T', ['M', 'P'], [-1, 1]]
+        cont_visresp = ['Task>Baseline', 'T', ['M', 'P'], [0.5, 0.5]]
+        return [cont_mp, cont_pm, cont_visresp]    
 
 def get_files_spm(subject_id, session, task, raw_data_dir):
     """
