@@ -70,11 +70,14 @@ BIDSDataGrabber = pe.Node(util.Function(function=utils.get_files,
       output_names=["bolds", "masks", "events", "TR", "confounds"]), 
       name="BIDSDataGrabber")
 
-# How many volumes to trim from the functional run before masking and preprocessing
+# What event/trial types, if any, to exclude
 modelfit.inputs.tsv2subjinfo.exclude = None
-modelfit.inputs.tsv2subjinfo.trim_indices = (6, -1)
-modelfit.inputs.trim.begin_index = 6
-modelfit.inputs.trim.end_index = -1
+
+# How many volumes to trim from the functional run before masking and preprocessing
+trim_idxs = (6, -1)
+modelfit.inputs.tsv2subjinfo.trim_indices = trim_idxs
+modelfit.inputs.trim.begin_index = trim_idxs[0]
+modelfit.inputs.trim.end_index = -trim_idxs[1]
 
 modelfit.inputs.modelspec.input_units = 'secs'
 modelfit.inputs.modelspec.high_pass_filter_cutoff = 128.
