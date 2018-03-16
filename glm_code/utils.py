@@ -118,7 +118,6 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
 
     TR = TRs[0]
 
-
     return bolds, masks, eventfiles, TR, confounds
 
 def get_contrasts(task):
@@ -138,50 +137,4 @@ def get_contrasts(task):
         cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
         cont_pm = ['P-M', 'T', ['M', 'P'], [-1, 1]]
         cont_visresp = ['Task>Baseline', 'T', ['M', 'P'], [0.5, 0.5]]
-        return [cont_mp, cont_pm, cont_visresp]    
-
-def get_files_spm(subject_id, session, task, raw_data_dir):
-    """
-    Given some information, retrieve all the files and metadata from a
-    BIDS-formatted dataset that will be passed to an SPM-based analysis pipeline.
-    """
-    from bids.grabbids import BIDSLayout
-    from utils import tsv2subjectinfo
-
-    layout = BIDSLayout(raw_data_dir)
-
-    subjects = layout.get_subjects()
-    assert(subject_id in subjects and subject_id in layout.get_subjects())
-
-    sessions = layout.get_sessions()
-    assert(session in sessions)
-
-    tasks = layout.get_tasks()
-    assert(task in tasks)
-
-    print(subjects, tasks, sessions)
-    
-    bolds = [f.filename for f in layout.get(subject=subject_id, modality='func', type='bold', 
-                              session=session, task=task, extensions=['nii'])]
-
-    struct = layout.get(subject=subject_id, modality='anat', session=session, type='T1w', extensions=['nii'])[0].filename
-
-    print(struct, "\n", bolds, end="\n")
-
-    eventfiles =  [f.filename for f in layout.get(subject=subject_id, modality="func",
-                              task=task, session=session, extensions=['tsv'])]
-    eventbunches = [tsv2subjectinfo(f) for f in eventfiles]
-    print(eventfiles, eventbunches, sep="\n", end="\n")
-
-    TRs = [layout.get_metadata(f.filename)['RepetitionTime'] for f in layout.get(subject=subject_id,
-      type="bold", modality="func", task=task, session=session, extensions=['nii'])]
-    print(TRs, end="\n")
-
-    assert(len(bolds)==len(eventfiles)==len(TRs)>0)
-    assert(TRs.count(TRs[0])==len(TRs)) # all runs for a particular task must have the same TR
-
-    TR = TRs[0]
-
-    print(list(zip(bolds, eventfiles, eventbunches, TRs)))
-
-    return bolds, struct, eventbunches, TR
+        return [cont_mp, cont_pm, cont_visresp]
