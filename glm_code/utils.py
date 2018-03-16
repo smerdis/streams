@@ -110,14 +110,10 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
                               modality="func", task=task, session=session, extensions=['nii.gz'])]
     confounds = [f.filename for f in preproc_layout.get(subject=subject_id, type="confounds",
                               task=task, session=session, extensions=['tsv'])]
-
     print(list(zip(bolds, masks, eventfiles, TRs)))
-
     assert len(bolds)==len(masks)==len(eventfiles)==len(TRs)==len(confounds)>0, "Input lists are not the same length!"
     assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have same TR
-
     TR = TRs[0]
-
     return bolds, masks, eventfiles, TR, confounds
 
 def get_contrasts(task):
