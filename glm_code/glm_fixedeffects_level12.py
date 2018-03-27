@@ -77,7 +77,7 @@ modelfit.inputs.tsv2subjinfo.exclude = None
 trim_idxs = (6, -1)
 modelfit.inputs.tsv2subjinfo.trim_indices = trim_idxs
 modelfit.inputs.trim.begin_index = trim_idxs[0]
-modelfit.inputs.trim.end_index = -trim_idxs[1]
+modelfit.inputs.trim.end_index = trim_idxs[1]
 
 modelfit.inputs.modelspec.input_units = 'secs'
 modelfit.inputs.modelspec.high_pass_filter_cutoff = 128.
