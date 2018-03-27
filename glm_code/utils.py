@@ -125,12 +125,14 @@ def get_contrasts(task):
     described above.
     """
     if task == "hemi":
+        cont_l = ['L>Baseline', 'T', ['L', 'R'], [1, 0]]
+        cont_r = ['R>Baseline', 'T', ['L', 'R'], [0, 1]]
         cont_lr = ['L-R', 'T', ['L', 'R'], [1, -1]]
-        cont_rl = ['R-L', 'T', ['L', 'R'], [-1, 1]]
         cont_visresp = ['Task>Baseline', 'T', ['L', 'R'], [0.5, 0.5]]
-        return [cont_lr, cont_rl, cont_visresp]
+        return [cont_l, cont_r, cont_lr, cont_visresp]
     elif task == "mp":
+        cont_m = ['M>Baseline', 'T', ['M', 'P'], [1, 0]]
+        cont_p = ['P>Baseline', 'T', ['M', 'P'], [0, 1]]
         cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
-        cont_pm = ['P-M', 'T', ['M', 'P'], [-1, 1]]
         cont_visresp = ['Task>Baseline', 'T', ['M', 'P'], [0.5, 0.5]]
-        return [cont_mp, cont_pm, cont_visresp]
+        return [cont_m, cont_p, cont_pm, cont_visresp]
