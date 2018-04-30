@@ -118,20 +118,22 @@ if __name__ == '__main__':
     # post-fmriprep BIDS-formatted location
     out_dir = os.path.abspath(sys.argv[2])
     fmriprep_dir = os.path.abspath(os.path.join(out_dir, 'fmriprep'))
+
+    sub = sys.argv[3]
+    ses = sys.argv[4]
+    task = sys.argv[5]
+
     # where intermediate outputs etc are stored
     # by creating a unique one each time, we prevent re-use,
     # which is desirable while testing different processing options and keeping them all
     # but maybe should be changed to a flag or option later (TODO)
     now = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    working_dir = os.path.abspath(os.path.join(out_dir, f"nipype_{now}"))
+    working_dir = os.path.abspath(os.path.join(out_dir, f"nipype_{sub}_{ses}_{task}"))
     BIDSDataGrabber.inputs.raw_data_dir = raw_data_dir
     BIDSDataGrabber.inputs.preprocessed_data_dir = fmriprep_dir
     hemi_wf.base_dir = working_dir
     hemi_wf.config = {"execution": {"crashdump_dir": os.path.join(working_dir, 'crashdumps')}}
 
-    sub = sys.argv[3]
-    ses = sys.argv[4]
-    task = sys.argv[5]
     BIDSDataGrabber.inputs.subject_id = sub
     BIDSDataGrabber.inputs.session = ses
     BIDSDataGrabber.inputs.task = task
