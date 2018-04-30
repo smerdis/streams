@@ -80,6 +80,9 @@ def sort_copes(files):
 def num_copes(files):
     return len(files)
 
+def fslmaths_threshold_roi_opstring(thresh):
+    return [f"-thr {thresh} -bin", f"-uthr {thresh} -bin"]
+
 def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
     """
     Given some information, retrieve all the files and metadata from a
@@ -127,39 +130,41 @@ def get_contrasts(task):
     if task == "hemi":
         cont_l = ['L>Baseline', 'T', ['L', 'R'], [1, 0]]
         cont_r = ['R>Baseline', 'T', ['L', 'R'], [0, 1]]
-        cont_lr = ['L-R', 'T', ['L', 'R'], [1, -1]]
+        cont_rl = ['R-L', 'T', ['L', 'R'], [-1, 1]]
         cont_visresp = ['Task>Baseline', 'T', ['L', 'R'], [0.5, 0.5]]
-        return [cont_l, cont_r, cont_lr, cont_visresp]
+        return [cont_l, cont_r, cont_rl, cont_visresp]
     elif task == "mp":
         cont_m = ['M>Baseline', 'T', ['M', 'P'], [1, 0]]
         cont_p = ['P>Baseline', 'T', ['M', 'P'], [0, 1]]
         cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
         cont_visresp = ['Task>Baseline', 'T', ['M', 'P'], [0.5, 0.5]]
-        return [cont_m, cont_p, cont_pm, cont_visresp]
+        return [cont_m, cont_p, cont_mp, cont_visresp]
 
-def get_model_outputs(datasink_dir, contrast_number):
-    """Given the datasink directory of a glm workflow, this grabs the Level 1 and 2 results for a particular contrast."""
+def get_model_outputs(datasink_dir, contrasts):
+    """Given the datasink directory of a glm workflow, this grabs the Level 1 and 2 results for the specified contrasts [list]."""
+    import os, glob
     contents = os.listdir(datasink_dir)
     l1outdir = 'results_dir'
     l2outdir = 'stats_dir'
-    l1tstats = []
+    #l1tstats = []
     l1copes = []
     l2outs = []
-    if l1outdir in contents:
-        l1glob = os.path.join(datasink_dir, l1outdir, '_modelestimate*')
-        l1outputs = sorted(glob.glob(l1glob))
-        for l1o in l1outputs:
-            l1tstats.append(os.path.join(l1o, f"results/tstat{contrast_number}.nii.gz"))
-            l1copes.append(os.path.join(l1o, f"results/cope{contrast_number}.nii.gz"))
-            
-    if l2outdir in contents:
-        l2contrastdir = os.path.join(datasink_dir, l2outdir, f"_flameo{contrast_number - 1}", "stats")
-        l2outs.extend([os.path.join(l2contrastdir, x) for x in ['cope1.nii.gz', 'zstat1.nii.gz']])
+    for contrast_number in contrasts:
+        if l1outdir in contents:
+            l1glob = os.path.join(datasink_dir, l1outdir, '_modelestimate*')
+            l1outputs = sorted(glob.glob(l1glob))
+            for l1o in l1outputs:
+                #l1tstats.append(os.path.join(l1o, f"results/tstat{contrast_number}.nii.gz"))
+                l1copes.append(os.path.join(l1o, f"results/cope{contrast_number}.nii.gz"))
+                
+        if l2outdir in contents:
+            l2contrastdir = os.path.join(datasink_dir, l2outdir, f"_flameo{contrast_number - 1}", "stats")
+            l2outs.extend([os.path.join(l2contrastdir, x) for x in ['cope1.nii.gz', 'zstat1.nii.gz']])
         
-    return l1tstats, l1copes, l2outs
+    return l1copes, l2outs
 
 def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
     """Prints an fsleyes command to view results of L1/2 for a given contrast.
     Allows specification of anat, func, and optional other ROI image."""
-    t, c, l2 = get_model_outputs(datasink_dir, contrast_number)
-    print(f"fsleyes {anat} {func} {vROI} {' '.join(t)} {' '.join(c)} {' '.join(l2)}")
+    c, l2 = get_model_outputs(datasink_dir, contrast_number)
+    print(f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}")
