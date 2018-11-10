@@ -66,7 +66,7 @@ modelfit.connect([
 
 # Data input and configuration!
 BIDSDataGrabber = pe.Node(util.Function(function=utils.get_files, 
-      input_names=["subject_id", "session", "task", "raw_data_dir", "preprocessed_data_dir"],
+      input_names=["subject_id", "session", "task", "raw_data_dir", "preprocessed_data_dir", "space", "run"],
       output_names=["bolds", "masks", "events", "TR", "confounds"]), 
       name="BIDSDataGrabber")
 
@@ -122,6 +122,9 @@ if __name__ == '__main__':
     sub = sys.argv[3]
     ses = sys.argv[4]
     task = sys.argv[5]
+    space = sys.argv[6]
+    import ast # we want to accept a list of runs as a command line option
+    run = ast.literal_eval(sys.argv[7]) # build that list from passed-in string representation e.g. "[2, 3, 4]"
 
     # where intermediate outputs etc are stored
     # by creating a unique one each time, we prevent re-use,
@@ -131,6 +134,8 @@ if __name__ == '__main__':
     working_dir = os.path.abspath(os.path.join(out_dir, f"nipype_{sub}_{ses}_{task}"))
     BIDSDataGrabber.inputs.raw_data_dir = raw_data_dir
     BIDSDataGrabber.inputs.preprocessed_data_dir = fmriprep_dir
+    BIDSDataGrabber.inputs.space = space
+    BIDSDataGrabber.inputs.run = run
     hemi_wf.base_dir = working_dir
     hemi_wf.config = {"execution": {"crashdump_dir": os.path.join(working_dir, 'crashdumps')}}
 

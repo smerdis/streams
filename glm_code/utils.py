@@ -83,7 +83,7 @@ def num_copes(files):
 def fslmaths_threshold_roi_opstring(thresh):
     return [f"-thr {thresh} -bin", f"-uthr {thresh} -bin"]
 
-def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
+def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space="T1w", run=[]):
     """
     Given some information, retrieve all the files and metadata from a
     BIDS-formatted dataset that will be passed to the analysis pipeline.
@@ -104,17 +104,26 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir):
     assert task in tasks, "Task not found!"
     
     bolds = [f.filename for f in preproc_layout.get(subject=subject_id, modality='func', type='preproc', 
-                              session=session, task=task, extensions=['nii.gz'])]
+                              session=session, task=task, space=space, run=run, extensions=['nii.gz'])]
+    print(f"BOLDS: {len(bolds)}\n{bolds}")
     masks = [f.filename for f in preproc_layout.get(subject=subject_id, modality='func', type='brainmask', 
-                              session=session, task=task, extensions=['nii.gz'])]
+                              session=session, task=task, space=space, run=run, extensions=['nii.gz'])]
+    print(f"Masks: {len(masks)}\n{masks}")
     eventfiles =  [f.filename for f in raw_layout.get(subject=subject_id, modality="func",
-                              task=task, session=session, extensions=['tsv'])]
+                              task=task, session=session, run=run, extensions=['tsv'])]
+    print(f"Eventfiles: {len(eventfiles)}\n{eventfiles}")
     TRs = [raw_layout.get_metadata(f.filename)['RepetitionTime'] for f in raw_layout.get(subject=subject_id,
-                              modality="func", task=task, session=session, extensions=['nii.gz'])]
+                              modality="func", task=task, session=session, run=run, extensions=['nii.gz'])]
+    print(TRs, len(TRs))
     confounds = [f.filename for f in preproc_layout.get(subject=subject_id, type="confounds",
-                              task=task, session=session, extensions=['tsv'])]
+                              task=task, session=session, run=run, extensions=['tsv'])]
+    print(f"Confounds: {len(confounds)}\n{confounds}")
     print(list(zip(bolds, masks, eventfiles, TRs)))
-    assert len(bolds)==len(masks)==len(eventfiles)==len(TRs)==len(confounds)>0, "Input lists are not the same length!"
+    # edit 11/9/18 - remove assert on event files, since some early hemifield scans don't have it
+    # but warn!
+    if (len(eventfiles) != len(bolds)):
+        print("Some functional runs do not have corresponding event files!")
+    assert len(bolds)==len(masks)==len(TRs)==len(confounds)>0, "Input lists are not the same length!"
     assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have same TR
     TR = TRs[0]
     return bolds, masks, eventfiles, TR, confounds
@@ -159,7 +168,7 @@ def get_model_outputs(datasink_dir, contrasts):
                 
         if l2outdir in contents:
             l2contrastdir = os.path.join(datasink_dir, l2outdir, f"_flameo{contrast_number - 1}", "stats")
-            l2outs.extend([os.path.join(l2contrastdir, x) for x in ['cope1.nii.gz', 'zstat1.nii.gz']])
+            l2outs.extend([os.path.join(l2contrastdir, x) for x in ['cope1.nii.gz']])
         
     return l1copes, l2outs
 
