@@ -74,7 +74,7 @@ BIDSDataGrabber = pe.Node(util.Function(function=utils.get_files,
 modelfit.inputs.tsv2subjinfo.exclude = None
 
 # How many volumes to trim from the functional run before masking and preprocessing
-trim_idxs = (6, -1)
+trim_idxs = (6, -1) # 6 at the front, 1 at the back, for hemifield. Should be 4 0 for MP
 modelfit.inputs.tsv2subjinfo.trim_indices = trim_idxs
 modelfit.inputs.trim.begin_index = trim_idxs[0]
 modelfit.inputs.trim.end_index = trim_idxs[1]
@@ -123,8 +123,11 @@ if __name__ == '__main__':
     ses = sys.argv[4]
     task = sys.argv[5]
     space = sys.argv[6]
-    import ast # we want to accept a list of runs as a command line option
-    run = ast.literal_eval(sys.argv[7]) # build that list from passed-in string representation e.g. "[2, 3, 4]"
+    if len(sys.argv) > 7:
+      import ast # we want to accept a list of runs as a command line option
+      run = ast.literal_eval(sys.argv[7]) # build that list from passed-in string representation e.g. "[2, 3, 4]"
+    else:
+      run = []
 
     # where intermediate outputs etc are stored
     # by creating a unique one each time, we prevent re-use,

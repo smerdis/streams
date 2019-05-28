@@ -83,16 +83,16 @@ def num_copes(files):
 def fslmaths_threshold_roi_opstring(thresh):
     return [f"-thr {thresh} -bin", f"-uthr {thresh} -bin"]
 
-def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space="T1w", run=[]):
+def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space="T1w", run=[], **kwargs):
     """
     Given some information, retrieve all the files and metadata from a
     BIDS-formatted dataset that will be passed to the analysis pipeline.
     """
-    from bids.grabbids import BIDSLayout
+    from bids import BIDSLayout
     
     # only the raw files have the correct metadata, eg TR, and the event files are here
-    raw_layout = BIDSLayout(raw_data_dir)
-    preproc_layout = BIDSLayout(preprocessed_data_dir)
+    raw_layout = BIDSLayout(raw_data_dir, validate=False, derivatives=False)
+    preproc_layout = BIDSLayout(preprocessed_data_dir, validate=False)
 
     subjects = preproc_layout.get_subjects()
     assert subject_id in subjects and subject_id in raw_layout.get_subjects(), "Subject not found!"
@@ -103,28 +103,34 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, sp
     tasks = preproc_layout.get_tasks()
     assert task in tasks, "Task not found!"
     
-    bolds = [f.filename for f in preproc_layout.get(subject=subject_id, modality='func', type='preproc', 
-                              session=session, task=task, space=space, run=run, extensions=['nii.gz'])]
+    bolds = sorted(preproc_layout.get(subject=subject_id, suffix='preproc', 
+                                        session=session, task=task, run=run, extension=['nii.gz'],
+                                        return_type='file', **kwargs))
     print(f"BOLDS: {len(bolds)}\n{bolds}")
-    masks = [f.filename for f in preproc_layout.get(subject=subject_id, modality='func', type='brainmask', 
-                              session=session, task=task, space=space, run=run, extensions=['nii.gz'])]
+    masks = sorted(preproc_layout.get(subject=subject_id, suffix='brainmask', 
+                              session=session, task=task, run=run, extension=['nii.gz'],
+                              return_type='file', **kwargs))
     print(f"Masks: {len(masks)}\n{masks}")
-    eventfiles =  [f.filename for f in raw_layout.get(subject=subject_id, modality="func",
-                              task=task, session=session, run=run, extensions=['tsv'])]
+    eventfiles =  sorted(raw_layout.get(subject=subject_id, suffix='events',
+                              task=task, session=session, run=run, extension=['tsv'],
+                              return_type='file', **kwargs))
     print(f"Eventfiles: {len(eventfiles)}\n{eventfiles}")
-    TRs = [raw_layout.get_metadata(f.filename)['RepetitionTime'] for f in raw_layout.get(subject=subject_id,
-                              modality="func", task=task, session=session, run=run, extensions=['nii.gz'])]
+    raw_bolds = sorted(raw_layout.get(subject=subject_id, suffix='bold',
+                                task=task, session=session, run=run, extension=['nii.gz'],
+                                return_type='file', **kwargs))
+    TRs = [raw_layout.get_tr(f) for f in raw_bolds]
     print(TRs, len(TRs))
-    confounds = [f.filename for f in preproc_layout.get(subject=subject_id, type="confounds",
-                              task=task, session=session, run=run, extensions=['tsv'])]
+    confounds = sorted(preproc_layout.get(subject=subject_id, suffix="confounds",
+                              task=task, session=session, run=run, extension=['tsv'], 
+                              return_type='file', **kwargs))
     print(f"Confounds: {len(confounds)}\n{confounds}")
     print(list(zip(bolds, masks, eventfiles, TRs)))
     # edit 11/9/18 - remove assert on event files, since some early hemifield scans don't have it
     # but warn!
     if (len(eventfiles) != len(bolds)):
         print("Some functional runs do not have corresponding event files!")
-    assert len(bolds)==len(masks)==len(TRs)==len(confounds)>0, "Input lists are not the same length!"
     assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have same TR
+    assert len(bolds)==len(masks)==len(confounds)>0, "Input lists are not the same length!"
     TR = TRs[0]
     return bolds, masks, eventfiles, TR, confounds
 
