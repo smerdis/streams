@@ -40,7 +40,8 @@ masker.connect([
 
 hemi_wf.connect([
                     (BIDSDataGrabber, masker, [
-                                              ('bolds', 'applymask.in_file')]),
+                                              ('bolds', 'applymask.in_file'),
+                                              ('masks', 'applymask.mask_file')]),
                     ])
 
 if __name__ == '__main__':
