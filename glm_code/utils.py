@@ -1,3 +1,40 @@
+# Utility functions for the LGN-cortical coupling (aka streams) project
+
+import os
+
+import numpy as np
+import pandas as pd
+
+
+# from fsleyes 0.32
+def isBIDSFile(filename, strict=True):
+    """Returns ``True`` if ``filename`` looks like a BIDS image or JSON file.
+
+    :arg filename: Name of file to check
+    :arg strict:   If ``True`` (the default), the file must be within a BIDS
+                   dataset directory, as defined by :func:`inBIDSDir`.
+    """
+    import re
+
+    name    = os.path.basename(filename)
+    pattern = r'([a-z0-9]+-[a-z0-9]+_)*([a-z0-9])+\.(nii|nii\.gz|json)'
+    flags   = re.ASCII | re.IGNORECASE
+    match   = re.fullmatch(pattern, name, flags) is not None
+    
+    print(name, match)
+    return match
+
+def average_timeseries(bolds, masker):
+    """Given a list of bold file names and a NiftiMasker that has already been fit,
+    compute the mean across runs of the bold timeseries and return it"""
+    for i, bold_file in enumerate(bolds):
+        masked_bold_nm = masker.transform(bold_file)
+        if i==0: # first run
+            all_bolds = np.empty((*masked_bold_nm.shape, len(bolds)))
+        print(i, all_bolds.shape, masked_bold_nm.shape, masked_bold_nm.dtype, masked_bold_nm[:5, :5], sep="\n")
+        all_bolds[:, :, i] = masked_bold_nm
+    return np.average(all_bolds, axis=-1)
+
 def tsv2subjectinfo(events_file, confounds_file=None, exclude=None, trim_indices=None):
     """
     Function to go from events tsv + confounds tsv to subjectinfo,
@@ -17,10 +54,8 @@ def tsv2subjectinfo(events_file, confounds_file=None, exclude=None, trim_indices
     SO: for now the trim_indices only apply to the confounds (which reflect the untrimmed data)
         but in the near future they'll be applied to the events as well.
     """
-
-    import pandas as pd
+    
     from nipype.interfaces.base import Bunch
-    import numpy as np
 
     # Events first
     events = pd.read_csv(events_file, sep="\t")
@@ -36,25 +71,33 @@ def tsv2subjectinfo(events_file, confounds_file=None, exclude=None, trim_indices
       amplitudes = [np.ones(len(d)) for d in durations]
 
     # Confounds next
-    confounds = pd.read_csv(confounds_file, sep="\t", na_values="n/a") # fmriprep confounds file
-    regressor_names=['WhiteMatter', 'GlobalSignal','FramewiseDisplacement',
-                        'aCompCor00',
-                        'aCompCor01',
-                        'aCompCor02',
-                        'aCompCor03',
-                        'aCompCor04',
-                        'aCompCor05',
-                        'X',
-                        'Y',
-                        'Z',
-                        'RotX',
-                        'RotY',
-                        'RotZ']
-
-    if trim_indices is None:
-        regressors = [list(confounds[reg].fillna(0)) for reg in regressor_names]
+    if confounds_file is None or confounds_file=='':
+        regressor_names = []
+        regressors = []
     else:
-        regressors = [list(confounds[reg].fillna(0))[slice(*trim_indices)] for reg in regressor_names]
+        confounds = pd.read_csv(confounds_file, sep="\t", na_values="n/a") # fmriprep confounds file
+        regressor_names=[ # 'white_matter', 'global_signal','framewise_displacement',
+                            # 'a_comp_cor_00',
+                            # 'a_comp_cor_01',
+                            # 'a_comp_cor_02',
+                            # 'a_comp_cor_03',
+                            # 'a_comp_cor_04',
+                            # 'a_comp_cor_05',
+                            'trans_x',
+                            'trans_y',
+                            'trans_z',
+                            'rot_x',
+                            'rot_y',
+                            'rot_z']
+
+        if trim_indices is None:
+            regressors = [list(confounds[reg].fillna(0)) for reg in regressor_names]
+        else:
+            assert(len(trim_indices)==2)
+            if trim_indices[-1] == 0: # if nothing is to be trimmed from the end, 0 will be passed in, but slice() wants None
+                regressors = [list(confounds[reg].fillna(0))[slice(trim_indices[0], None)] for reg in regressor_names]
+            else:
+                regressors = [list(confounds[reg].fillna(0))[slice(*trim_indices)] for reg in regressor_names]
 
     bunch = Bunch(conditions=conditions,
                     onsets=onsets,
@@ -82,6 +125,78 @@ def num_copes(files):
 
 def fslmaths_threshold_roi_opstring(thresh):
     return [f"-thr {thresh} -bin", f"-uthr {thresh} -bin"]
+
+def get_files_fmriprep14(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space=None, run=[], **kwargs):
+    """
+    Given some information, retrieve all the files and metadata from a
+    BIDS-formatted dataset (updated for fmriprep-1.4.1) that will be passed to the analysis pipeline.
+    """
+    from bids import BIDSLayout
+    
+    # only the raw files have the correct metadata, eg TR, and the event files are here
+    raw_layout = BIDSLayout(raw_data_dir, validate=False, derivatives=False)
+    preproc_layout = BIDSLayout(preprocessed_data_dir, validate=False)
+
+    subjects = preproc_layout.get_subjects()
+    assert subject_id in subjects and subject_id in raw_layout.get_subjects(), "Subject not found!"
+
+    sessions = preproc_layout.get_sessions()
+    assert session in sessions, "Session not found!"
+
+    tasks = preproc_layout.get_tasks()
+    assert task in tasks, "Task not found!"
+
+    if space=="None":
+        space = None
+
+    if space is None:
+        print("Space is None")
+        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, desc='preproc', suffix='bold',
+            extension=['nii.gz'], return_type='file')])
+    else:
+        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, desc='preproc', suffix='bold',
+            extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
+    print(f"BOLDS: {len(bolds)}\n{bolds}")
+    if space is None:
+        masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
+            session=session, task=task, run=run, extension=['nii.gz'], return_type='file')])
+        if not masks:
+            masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
+            session=session, task=task, extension=['nii.gz'], return_type='file')])
+    else:
+        masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
+            session=session, task=task, run=run, extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
+        if not masks:
+            masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
+                session=session, task=task, extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
+    if len(masks)==1: # there is only one mask and it is to be used for all runs
+        masks = masks * len(bolds)
+    print(f"Masks: {len(masks)}\n{masks}")
+    eventfiles =  sorted(raw_layout.get(subject=subject_id, suffix='events',
+                                  task=task, session=session, run=run, extension=['tsv'],
+                                  return_type='file'))
+    print(f"Eventfiles: {len(eventfiles)}\n{eventfiles}")
+    raw_bolds = sorted(raw_layout.get(subject=subject_id, suffix='bold',
+                                    task=task, session=session, run=run, extension=['nii.gz'],
+                                    return_type='file'))
+    TRs = [raw_layout.get_tr(f) for f in raw_bolds]
+    print(TRs, len(TRs))
+    confounds = sorted(preproc_layout.get(subject=subject_id, desc='confounds', suffix="regressors",
+                                  task=task, session=session, run=run, extension=['tsv'], 
+                                  return_type='file'))
+    print(f"Confounds: {len(confounds)}\n{confounds}")
+    if not confounds:
+        confounds = ['']*len(bolds)
+    #print(list(zip(bolds, masks, eventfiles, TRs)))
+    # edit 11/9/18 - remove assert on event files, since some early hemifield scans don't have it
+    # but warn!
+    if (len(eventfiles) != len(bolds)):
+        print("Some functional runs do not have corresponding event files!")
+    assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have same TR
+    assert len(bolds)==len(masks)>0, "Input lists are not the same length!" # used to also check for ==len(confounds)
+    TR = TRs[0]
+    return bolds, masks, eventfiles, TR, confounds
+
 
 def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space="T1w", run=[], **kwargs):
     """
@@ -157,7 +272,7 @@ def get_contrasts(task):
 
 def get_model_outputs(datasink_dir, contrasts):
     """Given the datasink directory of a glm workflow, this grabs the Level 1 and 2 results for the specified contrasts [list]."""
-    import os, glob
+    import glob
     contents = os.listdir(datasink_dir)
     l1outdir = 'results_dir'
     l2outdir = 'stats_dir'
@@ -182,4 +297,5 @@ def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
     """Prints an fsleyes command to view results of L1/2 for a given contrast.
     Allows specification of anat, func, and optional other ROI image."""
     c, l2 = get_model_outputs(datasink_dir, contrast_number)
-    print(f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}")
+    # print(f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}")
+    return f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}"
