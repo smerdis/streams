@@ -24,6 +24,32 @@ def isBIDSFile(filename, strict=True):
     print(name, match)
     return match
 
+def write_hemifield_localizer_event_file(event_file):
+    """Write hemifield localizer event file.
+    
+    This assumes the run is trimmed before hand,
+    with 6 volumes (1 hemicycle) removed up front
+    and 1 at the back, leaving 132 = 6 TRs/hemicycle x 22 hemicycles."""
+    num_LR_cycles = 11
+    len_hemifield_cycle = 13.5
+    TR = 2.25
+
+    total_stim_length = (len_hemifield_cycle * 2) * num_LR_cycles
+    total_volumes = total_stim_length/TR
+    volumes_per_hemicycle = len_hemifield_cycle/TR
+
+    conds = ['R', 'L'] # we start with L, actually, but a hemicycle is trimmed
+    print(total_stim_length, volumes_per_hemicycle, total_volumes)
+
+    file_contents = "onset\tduration\ttrial_type\n"
+    for hemicycle in range(0, num_LR_cycles*2-1):
+        file_contents += f"{(hemicycle)*len_hemifield_cycle}\t{len_hemifield_cycle}\t{conds[hemicycle%len(conds)]}\n"
+    
+    print(event_file, file_contents, sep="\n")
+    
+    with open(event_file, 'w') as f:
+        f.write(file_contents)
+
 def average_timeseries(bolds, masker):
     """Given a list of bold file names and a NiftiMasker that has already been fit,
     compute the mean across runs of the bold timeseries and return it"""
@@ -54,7 +80,8 @@ def tsv2subjectinfo(events_file, confounds_file=None, exclude=None, trim_indices
     SO: for now the trim_indices only apply to the confounds (which reflect the untrimmed data)
         but in the near future they'll be applied to the events as well.
     """
-    
+    import numpy as np
+    import pandas as pd
     from nipype.interfaces.base import Bunch
 
     # Events first
@@ -198,7 +225,7 @@ def get_files_fmriprep14(subject_id, session, task, raw_data_dir, preprocessed_d
     return bolds, masks, eventfiles, TR, confounds
 
 
-def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space="T1w", run=[], **kwargs):
+def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space=None, run=[], **kwargs):
     """
     Given some information, retrieve all the files and metadata from a
     BIDS-formatted dataset that will be passed to the analysis pipeline.
@@ -217,37 +244,58 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, sp
 
     tasks = preproc_layout.get_tasks()
     assert task in tasks, "Task not found!"
-    
-    bolds = sorted(preproc_layout.get(subject=subject_id, suffix='preproc', 
-                                        session=session, task=task, run=run, extension=['nii.gz'],
-                                        return_type='file', **kwargs))
+
+    if space=="None":
+        space = None
+
+    if space is None:
+        print("Space is None")
+        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, desc='preproc', suffix='bold',
+            extension=['nii.gz'], return_type='file')])
+    else:
+        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, desc='preproc', suffix='bold',
+            extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
     print(f"BOLDS: {len(bolds)}\n{bolds}")
-    masks = sorted(preproc_layout.get(subject=subject_id, suffix='brainmask', 
-                              session=session, task=task, run=run, extension=['nii.gz'],
-                              return_type='file', **kwargs))
+    if space is None:
+        masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
+            session=session, extension=['nii.gz'], return_type='file')])
+        if not masks:
+            masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
+            session=session, extension=['nii.gz'], return_type='file')])
+    else:
+        masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
+            session=session, extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
+        if not masks:
+            masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
+                session=session, extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
+    if len(masks)==1: # there is only one mask and it is to be used for all runs
+        masks = masks * len(bolds)
     print(f"Masks: {len(masks)}\n{masks}")
     eventfiles =  sorted(raw_layout.get(subject=subject_id, suffix='events',
-                              task=task, session=session, run=run, extension=['tsv'],
-                              return_type='file', **kwargs))
+                                  task=task, session=session, run=run, extension=['tsv'],
+                                  return_type='file'))
     print(f"Eventfiles: {len(eventfiles)}\n{eventfiles}")
     raw_bolds = sorted(raw_layout.get(subject=subject_id, suffix='bold',
-                                task=task, session=session, run=run, extension=['nii.gz'],
-                                return_type='file', **kwargs))
+                                    task=task, session=session, run=run, extension=['nii.gz'],
+                                    return_type='file'))
     TRs = [raw_layout.get_tr(f) for f in raw_bolds]
     print(TRs, len(TRs))
-    confounds = sorted(preproc_layout.get(subject=subject_id, suffix="confounds",
-                              task=task, session=session, run=run, extension=['tsv'], 
-                              return_type='file', **kwargs))
+    confounds = sorted(preproc_layout.get(subject=subject_id, desc='confounds', suffix="regressors",
+                                  task=task, session=session, run=run, extension=['tsv'], 
+                                  return_type='file'))
     print(f"Confounds: {len(confounds)}\n{confounds}")
-    print(list(zip(bolds, masks, eventfiles, TRs)))
+    if not confounds:
+        confounds = ['']*len(bolds)
+    #print(list(zip(bolds, masks, eventfiles, TRs)))
     # edit 11/9/18 - remove assert on event files, since some early hemifield scans don't have it
     # but warn!
     if (len(eventfiles) != len(bolds)):
         print("Some functional runs do not have corresponding event files!")
     assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have same TR
-    assert len(bolds)==len(masks)==len(confounds)>0, "Input lists are not the same length!"
+    assert len(bolds)==len(masks)>0, "Input lists are not the same length!" # used to also check for ==len(confounds)
     TR = TRs[0]
     return bolds, masks, eventfiles, TR, confounds
+
 
 def get_contrasts(task):
     """
@@ -269,6 +317,43 @@ def get_contrasts(task):
         cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
         cont_visresp = ['Task>Baseline', 'T', ['M', 'P'], [0.5, 0.5]]
         return [cont_m, cont_p, cont_mp, cont_visresp]
+
+
+def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir = None, space = None):
+    """Run the fixed effects glm, given some parameters..."""
+    
+    import glm_fixedeffects_level12 as glm
+    
+    if working_dir is None:
+        working_dir = os.path.abspath(os.path.join(os.path.split(out_dir)[0], f"nipype_{sub}_{ses}_{task}"))
+    glm.BIDSDataGrabber.inputs.raw_data_dir = raw_data_dir
+    glm.BIDSDataGrabber.inputs.preprocessed_data_dir = out_dir
+    glm.BIDSDataGrabber.inputs.space = space
+    glm.BIDSDataGrabber.inputs.run = run
+    glm.hemi_wf.base_dir = working_dir
+    glm.hemi_wf.config = {"execution": {"crashdump_dir": os.path.join(working_dir, 'crashdumps')}}
+
+    glm.BIDSDataGrabber.inputs.subject_id = sub
+    glm.BIDSDataGrabber.inputs.session = ses
+    glm.BIDSDataGrabber.inputs.task = task
+
+    contrasts = get_contrasts(task)
+    glm.modelfit.inputs.level1design.contrasts = contrasts
+
+    # How many volumes to trim from the functional run before masking and preprocessing
+    if task=="mp":
+        trim_idxs = (4, 0) # Should be 4 0 for MP
+    elif task=="hemi":
+        trim_idxs = (6, -1) # 6 at the front, 1 at the back, for hemifield. 
+    else:
+        assert("Unknown task and thus trim indices!")
+    glm.modelfit.inputs.tsv2subjinfo.trim_indices = trim_idxs
+    glm.modelfit.inputs.trim.begin_index = trim_idxs[0]
+    glm.modelfit.inputs.trim.end_index = trim_idxs[1]
+
+    glm.hemi_wf.write_graph()
+    outgraph = glm.hemi_wf.run(plugin='MultiProc', plugin_args={'n_procs':3})
+    return working_dir
 
 def get_model_outputs(datasink_dir, contrasts):
     """Given the datasink directory of a glm workflow, this grabs the Level 1 and 2 results for the specified contrasts [list]."""

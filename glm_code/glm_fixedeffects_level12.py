@@ -73,12 +73,6 @@ BIDSDataGrabber = pe.Node(util.Function(function=utils.get_files,
 # What event/trial types, if any, to exclude
 modelfit.inputs.tsv2subjinfo.exclude = None
 
-# How many volumes to trim from the functional run before masking and preprocessing
-trim_idxs = (6, -1) # 6 at the front, 1 at the back, for hemifield. Should be 4 0 for MP
-modelfit.inputs.tsv2subjinfo.trim_indices = trim_idxs
-modelfit.inputs.trim.begin_index = trim_idxs[0]
-modelfit.inputs.trim.end_index = trim_idxs[1]
-
 modelfit.inputs.modelspec.input_units = 'secs'
 modelfit.inputs.modelspec.high_pass_filter_cutoff = 128.
 
@@ -89,7 +83,7 @@ modelfit.inputs.modelestimate.smooth_autocorr = True
 modelfit.inputs.modelestimate.mask_size = 5
 modelfit.inputs.modelestimate.threshold = 0 # 0 is nipype default, setting until intensity normalization is decided
 
-hemi_wf = pe.Workflow(name="hemifield")
+hemi_wf = pe.Workflow(name="fixedeffects")
 
 # output
 datasink = pe.Node(nio.DataSink(), name='datasink')
@@ -110,45 +104,3 @@ hemi_wf.connect([
                                               ('TR', 'modelspec.time_repetition'),
                                               ('TR', 'level1design.interscan_interval')])
                     ])
-
-if __name__ == '__main__':
-    # When this script is invoked from the command line, read in arguments and use them
-    # raw data, with event files, appropriate metadata in header, etc
-    raw_data_dir = os.path.abspath(sys.argv[1])
-    # post-fmriprep BIDS-formatted location
-    out_dir = os.path.abspath(sys.argv[2])
-    fmriprep_dir = os.path.abspath(os.path.join(out_dir, 'fmriprep'))
-
-    sub = sys.argv[3]
-    ses = sys.argv[4]
-    task = sys.argv[5]
-    space = sys.argv[6]
-    if len(sys.argv) > 7:
-      import ast # we want to accept a list of runs as a command line option
-      run = ast.literal_eval(sys.argv[7]) # build that list from passed-in string representation e.g. "[2, 3, 4]"
-    else:
-      run = []
-
-    # where intermediate outputs etc are stored
-    # by creating a unique one each time, we prevent re-use,
-    # which is desirable while testing different processing options and keeping them all
-    # but maybe should be changed to a flag or option later (TODO)
-    now = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    working_dir = os.path.abspath(os.path.join(out_dir, f"nipype_{sub}_{ses}_{task}"))
-    BIDSDataGrabber.inputs.raw_data_dir = raw_data_dir
-    BIDSDataGrabber.inputs.preprocessed_data_dir = fmriprep_dir
-    BIDSDataGrabber.inputs.space = space
-    BIDSDataGrabber.inputs.run = run
-    hemi_wf.base_dir = working_dir
-    hemi_wf.config = {"execution": {"crashdump_dir": os.path.join(working_dir, 'crashdumps')}}
-
-    BIDSDataGrabber.inputs.subject_id = sub
-    BIDSDataGrabber.inputs.session = ses
-    BIDSDataGrabber.inputs.task = task
-
-    contrasts = utils.get_contrasts(task)
-    modelfit.inputs.level1design.contrasts = contrasts
-
-    hemi_wf.write_graph()
-    outgraph = hemi_wf.run(plugin='MultiProc', plugin_args={'n_procs':3})
-    #outgraph = hemi_wf.run(plugin='Linear') # Easier to debug for the moment
