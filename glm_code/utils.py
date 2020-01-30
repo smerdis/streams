@@ -320,7 +320,9 @@ def get_contrasts(task):
 
 
 def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir = None, space = None):
-    """Run the fixed effects glm, given some parameters..."""
+    """Run the fixed effects glm, given some parameters.
+
+    Return the working directory for this glm run"""
     
     import glm_fixedeffects_level12 as glm
     
