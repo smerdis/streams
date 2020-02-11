@@ -309,14 +309,14 @@ def get_contrasts(task):
         cont_l = ['L>Baseline', 'T', ['L', 'R'], [1, 0]]
         cont_r = ['R>Baseline', 'T', ['L', 'R'], [0, 1]]
         cont_rl = ['R-L', 'T', ['L', 'R'], [-1, 1]]
-        cont_visresp = ['Task>Baseline', 'T', ['L', 'R'], [0.5, 0.5]]
-        return [cont_l, cont_r, cont_rl, cont_visresp]
+        cont_lr = ['L-R', 'T', ['L', 'R'], [1, -1]]
+        return [cont_l, cont_r, cont_rl, cont_lr]
     elif task == "mp":
         cont_m = ['M>Baseline', 'T', ['M', 'P'], [1, 0]]
         cont_p = ['P>Baseline', 'T', ['M', 'P'], [0, 1]]
         cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
-        cont_visresp = ['Task>Baseline', 'T', ['M', 'P'], [0.5, 0.5]]
-        return [cont_m, cont_p, cont_mp, cont_visresp]
+        cont_pm = ['P-M', 'T', ['M', 'P'], [-1, 1]]
+        return [cont_m, cont_p, cont_mp, cont_pm]
 
 
 def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir = None, space = None):
