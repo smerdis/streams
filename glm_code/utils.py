@@ -1,9 +1,12 @@
 # Utility functions for the LGN-cortical coupling (aka streams) project
 
 import os
+import os.path as op
 
 import numpy as np
 import pandas as pd
+
+import matplotlib.pyplot as plt
 
 
 # from fsleyes 0.32
@@ -386,3 +389,38 @@ def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
     c, l2 = get_model_outputs(datasink_dir, contrast_number)
     # print(f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}")
     return f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}"
+
+def assign_roi_percentile(roi, beta_map, cut_pct, roi_below_suffix='M', roi_above_suffix='P'):
+    from nilearn.image import load_img, threshold_img, math_img
+    from nilearn.input_data import NiftiMasker
+
+    # first, figure out what the filenames of the new ROIs will be
+    roi_stub = op.basename(roi).split('.')[0]
+    roi_filename_parts = roi_stub.split('_')[:-2]
+    roi_dir = op.dirname(roi)
+    roi_below_name = f"{roi_stub.split('_')[-2]}{roi_below_suffix}{cut_pct}"
+    roi_above_name = f"{roi_stub.split('_')[-2]}{roi_above_suffix}{cut_pct}"
+    roi_below_filename = f"{op.join(roi_dir, '_'.join([*roi_filename_parts, roi_below_name, 'roi']))}.nii.gz"
+    roi_above_filename = f"{op.join(roi_dir, '_'.join([*roi_filename_parts, roi_above_name, 'roi']))}.nii.gz"
+    print(f"Given the LGN mask \n{roi}\nwill partition at {cut_pct}% and create\n{roi_below_filename}\n{roi_above_filename}", sep='\n')
+
+    beta_masker = NiftiMasker(mask_img=roi)
+    roi_betas = beta_masker.fit_transform(beta_map)[0]
+    plt.hist(roi_betas) # histogram of beta values within ROI mask
+    threshold = np.percentile(roi_betas, cut_pct) # value above/below which voxels are assigned to different ROIs
+    print(f"Mask contains {len(roi_betas)} voxels and {cut_pct}th percentile is {threshold}")
+    roi_nilearn = threshold_img(beta_map, threshold=threshold, mask_img=roi)
+    # threshold only works one way, returning values above the threshold
+    # therefore to get values below it, we do (-img)>(-threshold) within the roi mask
+    roi_nilearn_neg = threshold_img(math_img(f"-img", img=beta_map), threshold=(-1*threshold), mask_img=roi)
+    above_mask = math_img(f"img > {threshold}", img=roi_nilearn)
+    # exclude the zero voxels (not in the roi mask)
+    below_mask = math_img(f"np.logical_and((img != 0), (img > {-1*threshold}))", img=roi_nilearn_neg)
+    n_vox_above = np.count_nonzero(above_mask.get_data())
+    n_vox_below = np.count_nonzero(below_mask.get_data())
+    above_mask.to_filename(roi_above_filename)
+    below_mask.to_filename(roi_below_filename)
+    print(f"{roi_above_filename}: {n_vox_above} voxels\n{roi_below_filename}: {n_vox_below} voxels")
+    # we should have assigned all voxels in the ROI mask to one of the two new ROIs
+    assert(len(roi_betas)==n_vox_above+n_vox_below)
+    return above_mask, below_mask
