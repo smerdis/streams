@@ -407,8 +407,11 @@ def assign_roi_percentile(roi, beta_map, cut_pct, roi_below_suffix='M', roi_abov
     beta_masker = NiftiMasker(mask_img=roi)
     roi_betas = beta_masker.fit_transform(beta_map)[0]
     plt.hist(roi_betas) # histogram of beta values within ROI mask
+    plt.xlabel("BetaM-P")
+    plt.ylabel("Number of voxels")
     threshold = np.percentile(roi_betas, cut_pct) # value above/below which voxels are assigned to different ROIs
     print(f"Mask contains {len(roi_betas)} voxels and {cut_pct}th percentile is {threshold}")
+    plt.axvline(x=threshold, color="orange")
     roi_nilearn = threshold_img(beta_map, threshold=threshold, mask_img=roi)
     # threshold only works one way, returning values above the threshold
     # therefore to get values below it, we do (-img)>(-threshold) within the roi mask
