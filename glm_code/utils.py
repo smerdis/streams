@@ -322,15 +322,17 @@ def get_contrasts(task):
         return [cont_m, cont_p, cont_mp, cont_pm]
 
 
-def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir = None, space = None):
+def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir_suffix = None, space = None):
     """Run the fixed effects glm, given some parameters.
 
     Return the working directory for this glm run"""
     
     import glm_fixedeffects_level12 as glm
     
-    if working_dir is None:
+    if working_dir_suffix is None:
         working_dir = os.path.abspath(os.path.join(os.path.split(out_dir)[0], f"nipype_{sub}_{ses}_{task}"))
+    else:
+        working_dir = os.path.abspath(os.path.join(os.path.split(out_dir)[0], f"nipype_{sub}_{ses}_{task}_{working_dir_suffix}"))
     glm.BIDSDataGrabber.inputs.raw_data_dir = raw_data_dir
     glm.BIDSDataGrabber.inputs.preprocessed_data_dir = out_dir
     glm.BIDSDataGrabber.inputs.space = space
@@ -390,7 +392,7 @@ def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
     # print(f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}")
     return f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}"
 
-def assign_roi_percentile(roi, beta_map, cut_pct, roi_below_suffix='M', roi_above_suffix='P'):
+def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_below_suffix='M', roi_above_suffix='P'):
     from nilearn.image import load_img, threshold_img, math_img
     from nilearn.input_data import NiftiMasker
 
@@ -406,12 +408,14 @@ def assign_roi_percentile(roi, beta_map, cut_pct, roi_below_suffix='M', roi_abov
 
     beta_masker = NiftiMasker(mask_img=roi)
     roi_betas = beta_masker.fit_transform(beta_map)[0]
-    plt.hist(roi_betas) # histogram of beta values within ROI mask
+    plt.hist(roi_betas, bins=12) # histogram of beta values within ROI mask
     plt.xlabel("BetaM-P")
     plt.ylabel("Number of voxels")
     threshold = np.percentile(roi_betas, cut_pct) # value above/below which voxels are assigned to different ROIs
     print(f"Mask contains {len(roi_betas)} voxels and {cut_pct}th percentile is {threshold}")
     plt.axvline(x=threshold, color="orange")
+    plt.show()
+    plt.close()
     roi_nilearn = threshold_img(beta_map, threshold=threshold, mask_img=roi)
     # threshold only works one way, returning values above the threshold
     # therefore to get values below it, we do (-img)>(-threshold) within the roi mask
@@ -426,4 +430,33 @@ def assign_roi_percentile(roi, beta_map, cut_pct, roi_below_suffix='M', roi_abov
     print(f"{roi_above_filename}: {n_vox_above} voxels\n{roi_below_filename}: {n_vox_below} voxels")
     # we should have assigned all voxels in the ROI mask to one of the two new ROIs
     assert(len(roi_betas)==n_vox_above+n_vox_below)
+    imgs_in_order = [load_img(roi_above_filename), load_img(roi_below_filename), load_img(beta_map)] #[load_img(roi_above_filename), load_img(roi_below_filename), beta_map]
+    r = 3
+    c = 3
+    fig, ax = plt.subplots(ncols=r, figsize=(16,10))
+    img_data = [img.get_data() for img in imgs_in_order]
+    p_roi, m_roi, beta_mp = img_data
+    print([np.count_nonzero(x) for x in img_data])
+    p_roi_masked = np.ma.masked_where(p_roi==0, p_roi)
+    m_roi_masked = np.ma.masked_where(m_roi==0, m_roi)
+    p_mask = np.ma.getmask(p_roi_masked)
+    m_mask = np.ma.getmask(m_roi_masked)
+    both_mask = np.logical_and(p_mask,m_mask)
+    beta_masked = np.ma.masked_array(beta_mp, mask=both_mask)
+    print([np.count_nonzero(~m) for m in [p_mask, m_mask, both_mask]])
+    ref_vol_data = ref_vol_img.get_data()
+    for ri in range(r):
+        if which_hemi == 'L':
+            ax[ri].imshow(ref_vol_data[64:84,50:70,13-ri], cmap="gray_r")
+            pos = ax[ri].imshow(beta_masked[64:84,50:70,13-ri], cmap="cyan_orange")
+        elif which_hemi == 'R':
+            ax[ri].imshow(ref_vol_data[40:64,50:70,13-ri], cmap="gray_r")
+            pos = ax[ri].imshow(beta_masked[40:64,50:70,13-ri], cmap="cyan_orange")
+        ax[ri].set_xticks([])
+        ax[ri].set_yticks([])
+        #ax[ri].set_ylabel("")
+        plt.colorbar(pos, ax=ax[ri])
+        plt.subplots_adjust(wspace=.1)
+    plt.show()
+    plt.close()
     return above_mask, below_mask
