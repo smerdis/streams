@@ -156,78 +156,6 @@ def num_copes(files):
 def fslmaths_threshold_roi_opstring(thresh):
     return [f"-thr {thresh} -bin", f"-uthr {thresh} -bin"]
 
-def get_files_fmriprep14(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space=None, run=[], **kwargs):
-    """
-    Given some information, retrieve all the files and metadata from a
-    BIDS-formatted dataset (updated for fmriprep-1.4.1) that will be passed to the analysis pipeline.
-    """
-    from bids import BIDSLayout
-    
-    # only the raw files have the correct metadata, eg TR, and the event files are here
-    raw_layout = BIDSLayout(raw_data_dir, validate=False, derivatives=False)
-    preproc_layout = BIDSLayout(preprocessed_data_dir, validate=False)
-
-    subjects = preproc_layout.get_subjects()
-    assert subject_id in subjects and subject_id in raw_layout.get_subjects(), "Subject not found!"
-
-    sessions = preproc_layout.get_sessions()
-    assert session in sessions, "Session not found!"
-
-    tasks = preproc_layout.get_tasks()
-    assert task in tasks, "Task not found!"
-
-    if space=="None":
-        space = None
-
-    if space is None:
-        print("Space is None")
-        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, desc='preproc', suffix='bold',
-            extension=['nii.gz'], return_type='file')])
-    else:
-        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, desc='preproc', suffix='bold',
-            extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
-    print(f"BOLDS: {len(bolds)}\n{bolds}")
-    if space is None:
-        masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
-            session=session, task=task, run=run, extension=['nii.gz'], return_type='file')])
-        if not masks:
-            masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
-            session=session, task=task, extension=['nii.gz'], return_type='file')])
-    else:
-        masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
-            session=session, task=task, run=run, extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
-        if not masks:
-            masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
-                session=session, task=task, extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
-    if len(masks)==1: # there is only one mask and it is to be used for all runs
-        masks = masks * len(bolds)
-    print(f"Masks: {len(masks)}\n{masks}")
-    eventfiles =  sorted(raw_layout.get(subject=subject_id, suffix='events',
-                                  task=task, session=session, run=run, extension=['tsv'],
-                                  return_type='file'))
-    print(f"Eventfiles: {len(eventfiles)}\n{eventfiles}")
-    raw_bolds = sorted(raw_layout.get(subject=subject_id, suffix='bold',
-                                    task=task, session=session, run=run, extension=['nii.gz'],
-                                    return_type='file'))
-    TRs = [raw_layout.get_tr(f) for f in raw_bolds]
-    print(TRs, len(TRs))
-    confounds = sorted(preproc_layout.get(subject=subject_id, desc='confounds', suffix="regressors",
-                                  task=task, session=session, run=run, extension=['tsv'], 
-                                  return_type='file'))
-    print(f"Confounds: {len(confounds)}\n{confounds}")
-    if not confounds:
-        confounds = ['']*len(bolds)
-    #print(list(zip(bolds, masks, eventfiles, TRs)))
-    # edit 11/9/18 - remove assert on event files, since some early hemifield scans don't have it
-    # but warn!
-    if (len(eventfiles) != len(bolds)):
-        print("Some functional runs do not have corresponding event files!")
-    assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have same TR
-    assert len(bolds)==len(masks)>0, "Input lists are not the same length!" # used to also check for ==len(confounds)
-    TR = TRs[0]
-    return bolds, masks, eventfiles, TR, confounds
-
-
 def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space=None, run=[], **kwargs):
     """
     Given some information, retrieve all the files and metadata from a
@@ -309,17 +237,13 @@ def get_contrasts(task):
     described above.
     """
     if task == "hemi":
-        cont_l = ['L>Baseline', 'T', ['L', 'R'], [1, 0]]
-        cont_r = ['R>Baseline', 'T', ['L', 'R'], [0, 1]]
         cont_rl = ['R-L', 'T', ['L', 'R'], [-1, 1]]
         cont_lr = ['L-R', 'T', ['L', 'R'], [1, -1]]
-        return [cont_l, cont_r, cont_rl, cont_lr]
+        return [cont_rl, cont_lr]
     elif task == "mp":
-        cont_m = ['M>Baseline', 'T', ['M', 'P'], [1, 0]]
-        cont_p = ['P>Baseline', 'T', ['M', 'P'], [0, 1]]
         cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
         cont_pm = ['P-M', 'T', ['M', 'P'], [-1, 1]]
-        return [cont_m, cont_p, cont_mp, cont_pm]
+        return [cont_mp, cont_pm]
 
 
 def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir_suffix = None, space = None):
@@ -392,7 +316,7 @@ def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
     # print(f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}")
     return f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}"
 
-def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_below_suffix='M', roi_above_suffix='P'):
+def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_below_suffix='P', roi_above_suffix='M'):
     from nilearn.image import load_img, threshold_img, math_img
     from nilearn.input_data import NiftiMasker
 
@@ -417,10 +341,11 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     plt.show()
     plt.close()
     roi_nilearn = threshold_img(beta_map, threshold=threshold, mask_img=roi)
+    print(f'roi_nilearn: {np.count_nonzero(roi_nilearn.get_fdata())}')
     # threshold only works one way, returning values above the threshold
     # therefore to get values below it, we do (-img)>(-threshold) within the roi mask
     roi_nilearn_neg = threshold_img(math_img(f"-img", img=beta_map), threshold=(-1*threshold), mask_img=roi)
-    above_mask = math_img(f"img > {threshold}", img=roi_nilearn)
+    above_mask = math_img(f"np.logical_and((img != 0), (img > {threshold}))", img=roi_nilearn)
     # exclude the zero voxels (not in the roi mask)
     below_mask = math_img(f"np.logical_and((img != 0), (img > {-1*threshold}))", img=roi_nilearn_neg)
     n_vox_above = np.count_nonzero(above_mask.get_data())
@@ -437,6 +362,9 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     img_data = [img.get_data() for img in imgs_in_order]
     p_roi, m_roi, beta_mp = img_data
     print([np.count_nonzero(x) for x in img_data])
+    for label, roi in {'P':p_roi, 'M':m_roi}.items():
+        coords = np.argwhere(roi!=0)
+        print(f"{label}:", [f"{np.mean(coords[:, x]):.2f}" for x in range(3)])
     p_roi_masked = np.ma.masked_where(p_roi==0, p_roi)
     m_roi_masked = np.ma.masked_where(m_roi==0, m_roi)
     p_mask = np.ma.getmask(p_roi_masked)
