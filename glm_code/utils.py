@@ -243,7 +243,8 @@ def get_contrasts(task):
     elif task == "mp":
         cont_mp = ['M-P', 'T', ['M', 'P'], [1, -1]]
         cont_pm = ['P-M', 'T', ['M', 'P'], [-1, 1]]
-        return [cont_mp, cont_pm]
+        cont_visresp = ['P-M', 'T', ['M', 'P'], [1, 1]]
+        return [cont_mp, cont_pm, cont_visresp]
 
 
 def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir_suffix = None, space = None):
@@ -316,6 +317,21 @@ def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
     # print(f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}")
     return f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}"
 
+def roi_stats(roi_dict, ref_vol_img):
+    M = ref_vol_img.affine[:3, :3]
+    abc = ref_vol_img.affine[:3, 3]
+    for label, roi in roi_dict.items():
+        print(f"{label}")
+        coords = np.argwhere(roi.get_fdata()!=0)
+        print(coords.shape)
+        roi_center = np.mean(coords, 0)
+        roi_max_bounds = np.max(coords, 0)
+        roi_min_bounds = np.min(coords, 0)
+        print(roi_max_bounds, roi_min_bounds)
+        print(roi_max_bounds-roi_min_bounds, roi_max_bounds-roi_center)
+        print(roi_center, M.dot(roi_center) + abc)
+        print("****")
+
 def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_below_suffix='P', roi_above_suffix='M'):
     from nilearn.image import load_img, threshold_img, math_img
     from nilearn.input_data import NiftiMasker
@@ -330,9 +346,12 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     roi_above_filename = f"{op.join(roi_dir, '_'.join([*roi_filename_parts, roi_above_name, 'roi']))}.nii.gz"
     print(f"Given the LGN mask \n{roi}\nwill partition at {cut_pct}% and create\n{roi_below_filename}\n{roi_above_filename}", sep='\n')
 
+    # mask the beta map with the roi mask
     beta_masker = NiftiMasker(mask_img=roi)
     roi_betas = beta_masker.fit_transform(beta_map)[0]
-    plt.hist(roi_betas, bins=12) # histogram of beta values within ROI mask
+
+    # plot histogram of beta values within roi mask
+    plt.hist(roi_betas, bins=24)
     plt.xlabel("BetaM-P")
     plt.ylabel("Number of voxels")
     threshold = np.percentile(roi_betas, cut_pct) # value above/below which voxels are assigned to different ROIs
@@ -340,31 +359,33 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     plt.axvline(x=threshold, color="orange")
     plt.show()
     plt.close()
+
+    # threshold at value determined by percentile testing above
     roi_nilearn = threshold_img(beta_map, threshold=threshold, mask_img=roi)
-    print(f'roi_nilearn: {np.count_nonzero(roi_nilearn.get_fdata())}')
     # threshold only works one way, returning values above the threshold
     # therefore to get values below it, we do (-img)>(-threshold) within the roi mask
     roi_nilearn_neg = threshold_img(math_img(f"-img", img=beta_map), threshold=(-1*threshold), mask_img=roi)
-    above_mask = math_img(f"np.logical_and((img != 0), (img > {threshold}))", img=roi_nilearn)
     # exclude the zero voxels (not in the roi mask)
+    above_mask = math_img(f"np.logical_and((img != 0), (img > {threshold}))", img=roi_nilearn)
     below_mask = math_img(f"np.logical_and((img != 0), (img > {-1*threshold}))", img=roi_nilearn_neg)
     n_vox_above = np.count_nonzero(above_mask.get_data())
     n_vox_below = np.count_nonzero(below_mask.get_data())
+
+    # save files
     above_mask.to_filename(roi_above_filename)
     below_mask.to_filename(roi_below_filename)
     print(f"{roi_above_filename}: {n_vox_above} voxels\n{roi_below_filename}: {n_vox_below} voxels")
     # we should have assigned all voxels in the ROI mask to one of the two new ROIs
     assert(len(roi_betas)==n_vox_above+n_vox_below)
-    imgs_in_order = [load_img(roi_above_filename), load_img(roi_below_filename), load_img(beta_map)] #[load_img(roi_above_filename), load_img(roi_below_filename), beta_map]
-    r = 3
-    c = 3
+    
+    # fix/change this to not assume M/P
+    imgs_in_order = [load_img(roi_below_filename), load_img(roi_above_filename), load_img(beta_map)] #[load_img(roi_above_filename), load_img(roi_below_filename), beta_map]
+    r = 5
+    c = 5
     fig, ax = plt.subplots(ncols=r, figsize=(16,10))
     img_data = [img.get_data() for img in imgs_in_order]
     p_roi, m_roi, beta_mp = img_data
     print([np.count_nonzero(x) for x in img_data])
-    for label, roi in {'P':p_roi, 'M':m_roi}.items():
-        coords = np.argwhere(roi!=0)
-        print(f"{label}:", [f"{np.mean(coords[:, x]):.2f}" for x in range(3)])
     p_roi_masked = np.ma.masked_where(p_roi==0, p_roi)
     m_roi_masked = np.ma.masked_where(m_roi==0, m_roi)
     p_mask = np.ma.getmask(p_roi_masked)
@@ -375,11 +396,11 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     ref_vol_data = ref_vol_img.get_data()
     for ri in range(r):
         if which_hemi == 'L':
-            ax[ri].imshow(ref_vol_data[64:84,50:70,13-ri], cmap="gray_r")
-            pos = ax[ri].imshow(beta_masked[64:84,50:70,13-ri], cmap="cyan_orange")
+            ax[ri].imshow(ref_vol_data[64:84,50:70,14-ri], cmap="gray_r")
+            pos = ax[ri].imshow(beta_masked[64:84,50:70,13-ri], cmap="coolwarm")
         elif which_hemi == 'R':
-            ax[ri].imshow(ref_vol_data[40:64,50:70,13-ri], cmap="gray_r")
-            pos = ax[ri].imshow(beta_masked[40:64,50:70,13-ri], cmap="cyan_orange")
+            ax[ri].imshow(ref_vol_data[40:64,50:70,14-ri], cmap="gray_r")
+            pos = ax[ri].imshow(beta_masked[40:64,50:70,13-ri], cmap="coolwarm")
         ax[ri].set_xticks([])
         ax[ri].set_yticks([])
         #ax[ri].set_ylabel("")
@@ -387,4 +408,4 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
         plt.subplots_adjust(wspace=.1)
     plt.show()
     plt.close()
-    return above_mask, below_mask
+    return above_mask, below_mask, threshold
