@@ -8,6 +8,12 @@ import pandas as pd
 
 import matplotlib.pyplot as plt
 
+import nilearn
+from nilearn.masking import apply_mask
+from nilearn.plotting import plot_img, plot_epi, plot_roi, plot_stat_map, view_img, plot_anat
+from nilearn.image import load_img, threshold_img, math_img, resample_to_img, new_img_like
+from nilearn.input_data import NiftiMasker
+
 
 # from fsleyes 0.32
 def isBIDSFile(filename, strict=True):
@@ -317,6 +323,28 @@ def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
     # print(f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}")
     return f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}"
 
+def roi_centers(big_roi_fn, subdivision_rois_fns, ref_vol_img):
+    np.set_printoptions(precision=3)
+    M = ref_vol_img.affine[:3, :3]
+    abc = ref_vol_img.affine[:3, 3]
+    big_roi = load_img(big_roi_fn)
+    subdivision_rois = [load_img(f) for f in subdivision_rois_fns]
+    big_coords = np.argwhere(big_roi.get_fdata()!=0)
+    big_roi_center = M.dot(np.mean(big_coords, 0)) + abc
+    big_roi_max_bounds = M.dot(np.max(big_coords, 0)) + abc
+    big_roi_min_bounds = M.dot(np.min(big_coords, 0)) + abc
+    big_roi_extent = big_roi_max_bounds-big_roi_min_bounds
+    print(f"Big roi extends from {big_roi_min_bounds} to {big_roi_max_bounds}\nExtent is {big_roi_extent} and center is {big_roi_center}")
+    fig, ax = plt.subplots(1)
+    for fn,roi in zip(subdivision_rois_fns,subdivision_rois):
+        coords = np.argwhere(roi.get_fdata()!=0)
+        roi_center = M.dot(np.mean(coords, 0)) + abc
+        roi_center_proportion = (big_roi_max_bounds - roi_center)/big_roi_extent
+        ax.scatter(roi_center_proportion[0], 1-roi_center_proportion[2])
+        ax.set_xlabel("Proportion of LGN extent (L-R)")
+        ax.set_ylabel("Proportion of LGn extent (Ventral - Dorsal)")
+        print(fn, roi_center, roi_center_proportion, sep='\n')
+
 def roi_stats(roi_dict, ref_vol_img):
     M = ref_vol_img.affine[:3, :3]
     abc = ref_vol_img.affine[:3, 3]
@@ -327,15 +355,13 @@ def roi_stats(roi_dict, ref_vol_img):
         roi_center = np.mean(coords, 0)
         roi_max_bounds = np.max(coords, 0)
         roi_min_bounds = np.min(coords, 0)
-        print(roi_max_bounds, roi_min_bounds)
-        print(roi_max_bounds-roi_min_bounds, roi_max_bounds-roi_center)
+        print("ROI max and min coords", roi_max_bounds, roi_min_bounds)
+        roi_extent = roi_max_bounds-roi_min_bounds
+        print(roi_extent, roi_max_bounds-roi_center)
         print(roi_center, M.dot(roi_center) + abc)
         print("****")
 
 def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_below_suffix='P', roi_above_suffix='M'):
-    from nilearn.image import load_img, threshold_img, math_img
-    from nilearn.input_data import NiftiMasker
-
     # first, figure out what the filenames of the new ROIs will be
     roi_stub = op.basename(roi).split('.')[0]
     roi_filename_parts = roi_stub.split('_')[:-2]
