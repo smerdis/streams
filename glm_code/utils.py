@@ -14,6 +14,14 @@ from nilearn.plotting import plot_img, plot_epi, plot_roi, plot_stat_map, view_i
 from nilearn.image import load_img, threshold_img, math_img, resample_to_img, new_img_like
 from nilearn.input_data import NiftiMasker
 
+import nitime
+import nitime.fmri.io as nfio
+import nitime.timeseries as ts
+import nitime.analysis as nta
+import nitime.utils as ntu
+import nitime.viz as ntv
+
+
 
 # from fsleyes 0.32
 def isBIDSFile(filename, strict=True):
@@ -162,7 +170,7 @@ def num_copes(files):
 def fslmaths_threshold_roi_opstring(thresh):
     return [f"-thr {thresh} -bin", f"-uthr {thresh} -bin"]
 
-def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space=None, run=[], **kwargs):
+def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, space=None, run=[], strict=True, **kwargs):
     """
     Given some information, retrieve all the files and metadata from a
     BIDS-formatted dataset that will be passed to the analysis pipeline.
@@ -187,10 +195,10 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, sp
 
     if space is None:
         print("Space is None")
-        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, desc='preproc', suffix='bold',
+        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, suffix='bold',
             extension=['nii.gz'], return_type='file')])
     else:
-        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, desc='preproc', suffix='bold',
+        bolds = sorted([f for f in preproc_layout.get(subject=subject_id, session=session, task=task, run=run, suffix='bold',
             extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
     print(f"BOLDS: {len(bolds)}\n{bolds}")
     if space is None:
@@ -217,7 +225,7 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, sp
                                     return_type='file'))
     TRs = [raw_layout.get_tr(f) for f in raw_bolds]
     print(TRs, len(TRs))
-    confounds = sorted(preproc_layout.get(subject=subject_id, desc='confounds', suffix="regressors",
+    confounds = sorted(preproc_layout.get(subject=subject_id, suffix="regressors",
                                   task=task, session=session, run=run, extension=['tsv'], 
                                   return_type='file'))
     print(f"Confounds: {len(confounds)}\n{confounds}")
@@ -229,7 +237,8 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, sp
     if (len(eventfiles) != len(bolds)):
         print("Some functional runs do not have corresponding event files!")
     assert TRs.count(TRs[0])==len(TRs), "Not all TRs are the same!" # all runs for a particular task must have same TR
-    assert len(bolds)==len(masks)>0, "Input lists are not the same length!" # used to also check for ==len(confounds)
+    if strict:
+        assert len(bolds)==len(masks)>0, "Input lists are not the same length!" # used to also check for ==len(confounds)
     TR = TRs[0]
     return bolds, masks, eventfiles, TR, confounds
 
@@ -342,7 +351,7 @@ def roi_centers(big_roi_fn, subdivision_rois_fns, ref_vol_img):
         roi_center_proportion = (big_roi_max_bounds - roi_center)/big_roi_extent
         ax.scatter(roi_center_proportion[0], 1-roi_center_proportion[2])
         ax.set_xlabel("Proportion of LGN extent (L-R)")
-        ax.set_ylabel("Proportion of LGn extent (Ventral - Dorsal)")
+        ax.set_ylabel("Proportion of LGN extent (Ventral - Dorsal)")
         print(fn, roi_center, roi_center_proportion, sep='\n')
 
 def roi_stats(roi_dict, ref_vol_img):
@@ -435,3 +444,42 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     plt.show()
     plt.close()
     return above_mask, below_mask, threshold
+
+def get_timeseries_from_file(bold, mask, TR, **kwargs):
+    """
+    Given a bold file and roi mask, return a nitime TimeSeries object
+    """
+    masker = NiftiMasker(mask_img=mask, t_r=TR, **kwargs)
+    return masker, ts.TimeSeries(data=masker.fit_transform(bold).T, sampling_interval=TR)
+
+def seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method=dict(NFFT=32)):
+    conn_analyzer = nta.SeedCoherenceAnalyzer(seed_ts, target_ts, method=method)
+    freq_idx = np.where((conn_analyzer.frequencies > f_lb) * (conn_analyzer.frequencies < f_ub))[0]
+    # mean coherence across voxels in each freq bin
+    mean_coh = np.mean(conn_analyzer.coherence, axis=0)
+    # mean coherence across voxels in freq bins of interest
+    mean_coh_bandpass = mean_coh[freq_idx]
+    # coherence in freq band of interest for each voxel
+    coh_by_voxel = np.mean(conn_analyzer.coherence[:, freq_idx], axis=1)
+    plt.plot(conn_analyzer.frequencies, mean_coh)
+    print(seed_ts.data.shape, target_ts.data.shape, conn_analyzer.coherence.shape, mean_coh.shape, mean_coh_bandpass.shape)
+    return conn_analyzer, coh_by_voxel
+
+def seed_coherence_analysis(bold, mask, seed_roi, TR, f_ub, f_lb, coh_fn, mean_seed=True, method=dict(NFFT=32)):
+    """
+    Given a bold file, brainmask, and seed ROI mask, do a seed coherence analysis.
+    """
+    target_masker, target_ts = get_timeseries_from_file(bold, mask, TR, detrend=False, standardize=False, high_pass=f_lb, low_pass=f_ub)
+    seed_masker, seed_ts = get_timeseries_from_file(bold, seed_roi, TR, detrend=False, standardize=False, high_pass=f_lb, low_pass=f_ub)
+
+    if mean_seed:
+        seed_ts = ts.TimeSeries(data=np.mean(seed_ts.data, axis=0), sampling_interval=TR)
+        n_seeds = 1
+    else:
+        n_seeds = seed_ts.data.shape[0]
+
+    conn_analyzer, coh_by_voxel = seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method)
+    coherence_img = target_masker.inverse_transform(coh_by_voxel)
+    coherence_img.to_filename(coh_fn)
+
+    return conn_analyzer
