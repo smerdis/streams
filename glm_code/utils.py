@@ -455,14 +455,40 @@ def get_timeseries_from_file(bold, mask, TR, **kwargs):
 def seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method=dict(NFFT=32)):
     conn_analyzer = nta.SeedCoherenceAnalyzer(seed_ts, target_ts, method=method)
     freq_idx = np.where((conn_analyzer.frequencies > f_lb) * (conn_analyzer.frequencies < f_ub))[0]
+    print(f"Looking at freq bins centered on: {conn_analyzer.frequencies[freq_idx]}")
     # mean coherence across voxels in each freq bin
     mean_coh = np.mean(conn_analyzer.coherence, axis=0)
     # mean coherence across voxels in freq bins of interest
-    mean_coh_bandpass = mean_coh[freq_idx]
+    mean_coh_bandpass = np.mean(mean_coh[freq_idx])
     # coherence in freq band of interest for each voxel
     coh_by_voxel = np.mean(conn_analyzer.coherence[:, freq_idx], axis=1)
-    plt.plot(conn_analyzer.frequencies, mean_coh)
-    print(seed_ts.data.shape, target_ts.data.shape, conn_analyzer.coherence.shape, mean_coh.shape, mean_coh_bandpass.shape)
+
+    # plots of interest
+    fig, ax = plt.subplots(3, figsize=(10, 12))
+    ax[0].set_title("Mean coherence with seed across voxels at different frequencies")
+    ax[0].plot(conn_analyzer.frequencies, mean_coh)
+    ax[0].axvline(x=f_lb)
+    ax[0].axvline(x=f_ub)
+    ax[0].set_xlabel("Frequency (Hz)")
+    ax[0].set_ylabel("Coherence")
+
+    ax[1].set_title("Coherence of each voxel with seed at different frequencies")
+    for i in range(conn_analyzer.coherence.shape[0]):
+        ax[1].plot(conn_analyzer.frequencies, conn_analyzer.coherence[i, :])
+    ax[1].axvline(x=f_lb)
+    ax[1].axvline(x=f_ub)
+    ax[1].set_xlabel("Frequency (Hz)")
+    ax[1].set_ylabel("Coherence")
+
+    ax[2].set_title(f"Histogram of voxel coherence values within band {f_lb} < f < {f_ub} (N={coh_by_voxel.shape[0]})")
+    ax[2].hist(coh_by_voxel)
+    ax[2].set_xlabel("Coherence")
+    ax[2].set_ylabel("# voxels")
+
+    plt.subplots_adjust(hspace=.3)
+    plt.show()
+    plt.close('all')
+    print(seed_ts.data.shape, target_ts.data.shape, conn_analyzer.coherence.shape, mean_coh.shape, mean_coh_bandpass.shape, coh_by_voxel.shape)
     return conn_analyzer, coh_by_voxel
 
 def seed_coherence_analysis(bold, mask, seed_roi, TR, f_ub, f_lb, coh_fn, mean_seed=True, method=dict(NFFT=32)):
@@ -479,7 +505,5 @@ def seed_coherence_analysis(bold, mask, seed_roi, TR, f_ub, f_lb, coh_fn, mean_s
         n_seeds = seed_ts.data.shape[0]
 
     conn_analyzer, coh_by_voxel = seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method)
-    coherence_img = target_masker.inverse_transform(coh_by_voxel)
-    coherence_img.to_filename(coh_fn)
 
-    return conn_analyzer
+    return conn_analyzer, target_masker
