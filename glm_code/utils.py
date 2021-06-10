@@ -1,17 +1,20 @@
 # Utility functions for the LGN-cortical coupling (aka streams) project
 
-import os
+import os, glob
 import os.path as op
 
 import numpy as np
 import pandas as pd
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as colors
+
+import nibabel as nib
 
 import nilearn
 from nilearn.masking import apply_mask
 from nilearn.plotting import plot_img, plot_epi, plot_roi, plot_stat_map, view_img, plot_anat
-from nilearn.image import load_img, threshold_img, math_img, resample_to_img, new_img_like
+from nilearn.image import get_data, index_img, load_img, threshold_img, math_img, resample_to_img, new_img_like
 from nilearn.input_data import NiftiMasker
 
 import nitime
@@ -20,8 +23,6 @@ import nitime.timeseries as ts
 import nitime.analysis as nta
 import nitime.utils as ntu
 import nitime.viz as ntv
-
-
 
 # from fsleyes 0.32
 def isBIDSFile(filename, strict=True):
@@ -78,6 +79,8 @@ def average_timeseries(bolds, masker):
         all_bolds[:, :, i] = masked_bold_nm
     return np.average(all_bolds, axis=-1)
 
+
+## functions for GLM implementation in nipype
 def tsv2subjectinfo(events_file, confounds_file=None, exclude=None, trim_indices=None):
     """
     Function to go from events tsv + confounds tsv to subjectinfo,
@@ -203,13 +206,13 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, sp
     print(f"BOLDS: {len(bolds)}\n{bolds}")
     if space is None:
         masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
-            session=session, extension=['nii.gz'], return_type='file')])
+            session=session, task=task, extension=['nii.gz'], return_type='file')])
         if not masks:
             masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
             session=session, extension=['nii.gz'], return_type='file')])
     else:
         masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
-            session=session, extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
+            session=session, task=task, extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
         if not masks:
             masks = sorted([f for f in preproc_layout.get(subject=subject_id, suffix='mask',
                 session=session, extension=['nii.gz'], return_type='file') if f"space-{space}" in f])
@@ -332,6 +335,8 @@ def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
     # print(f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}")
     return f"fsleyes {anat} {func} {vROI} {' '.join(c)} {' '.join(l2)}"
 
+
+## Functions for dealing with rois
 def roi_centers(big_roi_fn, subdivision_rois_fns, ref_vol_img):
     np.set_printoptions(precision=3)
     M = ref_vol_img.affine[:3, :3]
@@ -365,9 +370,11 @@ def roi_stats(roi_dict, ref_vol_img):
         roi_max_bounds = np.max(coords, 0)
         roi_min_bounds = np.min(coords, 0)
         print("ROI max and min coords", roi_max_bounds, roi_min_bounds)
+        #for i in range(roi_min_bounds[2], roi_max_bounds[2]+1)
+        #    [roi_min_bounds[0]-1, roi_min_bounds[1]-1, i]
         roi_extent = roi_max_bounds-roi_min_bounds
-        print(roi_extent, roi_max_bounds-roi_center)
-        print(roi_center, M.dot(roi_center) + abc)
+        print("ROI extent (total voxel span and max/min distance from center): ", roi_extent, roi_max_bounds-roi_center, roi_min_bounds-roi_center, sep='\n')
+        print("ROI center in EPI and real-world coordinates: ", roi_center, M.dot(roi_center) + abc, sep='\n')
         print("****")
 
 def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_below_suffix='P', roi_above_suffix='M'):
@@ -379,14 +386,29 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     roi_above_name = f"{roi_stub.split('_')[-2]}{roi_above_suffix}{cut_pct}"
     roi_below_filename = f"{op.join(roi_dir, '_'.join([*roi_filename_parts, roi_below_name, 'roi']))}.nii.gz"
     roi_above_filename = f"{op.join(roi_dir, '_'.join([*roi_filename_parts, roi_above_name, 'roi']))}.nii.gz"
-    print(f"Given the LGN mask \n{roi}\nwill partition at {cut_pct}% and create\n{roi_below_filename}\n{roi_above_filename}", sep='\n')
+
+    coords = np.argwhere(load_img(roi).get_fdata()!=0)
+    roi_max_bounds = np.max(coords, 0)
+    roi_min_bounds = np.min(coords, 0)
+    roi_max_x = roi_max_bounds[0]
+    roi_min_x = roi_min_bounds[0]
+    roi_max_y = roi_max_bounds[1]
+    roi_min_y = roi_min_bounds[1]
+    roi_max_z = roi_max_bounds[2]
+    roi_min_z = roi_min_bounds[2]
+    roi_extent_z = roi_max_z - roi_min_z + 1
+
+    print(f"****\n****\nGiven the LGN mask \n{roi}\nwhich extends from {roi_max_bounds} to {roi_min_bounds}\nwill partition at {cut_pct}% and create\n{roi_below_filename}\n{roi_above_filename}", sep='\n')
 
     # mask the beta map with the roi mask
     beta_masker = NiftiMasker(mask_img=roi)
     roi_betas = beta_masker.fit_transform(beta_map)[0]
 
+    roi_beta_min = np.min(roi_betas)
+    roi_beta_max = np.max(roi_betas)
+
     # plot histogram of beta values within roi mask
-    plt.hist(roi_betas, bins=24)
+    plt.hist(roi_betas, bins=16)
     plt.xlabel("BetaM-P")
     plt.ylabel("Number of voxels")
     threshold = np.percentile(roi_betas, cut_pct) # value above/below which voxels are assigned to different ROIs
@@ -415,9 +437,7 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     
     # fix/change this to not assume M/P
     imgs_in_order = [load_img(roi_below_filename), load_img(roi_above_filename), load_img(beta_map)] #[load_img(roi_above_filename), load_img(roi_below_filename), beta_map]
-    r = 5
-    c = 5
-    fig, ax = plt.subplots(ncols=r, figsize=(16,10))
+    fig, ax = plt.subplots(ncols=roi_extent_z, figsize=(16,6))
     img_data = [img.get_data() for img in imgs_in_order]
     p_roi, m_roi, beta_mp = img_data
     print([np.count_nonzero(x) for x in img_data])
@@ -429,22 +449,24 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     beta_masked = np.ma.masked_array(beta_mp, mask=both_mask)
     print([np.count_nonzero(~m) for m in [p_mask, m_mask, both_mask]])
     ref_vol_data = ref_vol_img.get_data()
-    for ri in range(r):
-        if which_hemi == 'L':
-            ax[ri].imshow(ref_vol_data[64:84,50:70,14-ri], cmap="gray_r")
-            pos = ax[ri].imshow(beta_masked[64:84,50:70,13-ri], cmap="coolwarm")
-        elif which_hemi == 'R':
-            ax[ri].imshow(ref_vol_data[40:64,50:70,14-ri], cmap="gray_r")
-            pos = ax[ri].imshow(beta_masked[40:64,50:70,13-ri], cmap="coolwarm")
+    for ri in range(roi_extent_z):
+        #ax[ri].imshow(ref_vol_data[roi_min_x-2:roi_max_x+2,roi_min_y-2:roi_max_y+2,roi_max_z-ri], cmap="gray_r", alpha=0.3)
+        pos = ax[ri].imshow(beta_masked[roi_min_x-2:roi_max_x+2,roi_min_y-2:roi_max_y+2,roi_max_z-ri], cmap="coolwarm", clim=(roi_beta_min, roi_beta_max),
+            #norm=MidpointNormalize(midpoint=threshold, vmin=roi_beta_min, vmax=roi_beta_max))
+            norm=colors.DivergingNorm(vmin=roi_beta_min, vcenter=threshold, vmax=roi_beta_max))
+        ax[ri].set_title(f"Slice {roi_max_z-ri}")
+        ax[ri].set_xlabel(f"Left to Right")
+        ax[ri].set_ylabel(f"Posterior to Anterior")
         ax[ri].set_xticks([])
         ax[ri].set_yticks([])
-        #ax[ri].set_ylabel("")
-        plt.colorbar(pos, ax=ax[ri])
-        plt.subplots_adjust(wspace=.1)
+    plt.colorbar(pos, ax=ax[ri])
+    plt.subplots_adjust(wspace=.2, hspace=.2)
     plt.show()
     plt.close()
     return above_mask, below_mask, threshold
 
+
+## Functions for dealing with timeseries and doing coherence analysis
 def get_timeseries_from_file(bold, mask, TR, **kwargs):
     """
     Given a bold file and roi mask, return a nitime TimeSeries object
@@ -455,46 +477,56 @@ def get_timeseries_from_file(bold, mask, TR, **kwargs):
 def seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method=dict(NFFT=32)):
     conn_analyzer = nta.SeedCoherenceAnalyzer(seed_ts, target_ts, method=method)
     freq_idx = np.where((conn_analyzer.frequencies > f_lb) * (conn_analyzer.frequencies < f_ub))[0]
-    print(f"Looking at freq bins centered on: {conn_analyzer.frequencies[freq_idx]}")
+    print(f"Seed timeseries has shape: {seed_ts.shape}\nLooking at freq bins centered on: {conn_analyzer.frequencies[freq_idx]}")
     # mean coherence across voxels in each freq bin
     mean_coh = np.mean(conn_analyzer.coherence, axis=0)
     # mean coherence across voxels in freq bins of interest
     mean_coh_bandpass = np.mean(mean_coh[freq_idx])
     # coherence in freq band of interest for each voxel
     coh_by_voxel = np.mean(conn_analyzer.coherence[:, freq_idx], axis=1)
+    phase_by_voxel = np.mean(conn_analyzer.relative_phases[:, freq_idx], axis=1)
 
     # plots of interest
     fig, ax = plt.subplots(3, figsize=(10, 12))
     ax[0].set_title("Mean coherence with seed across voxels at different frequencies")
-    ax[0].plot(conn_analyzer.frequencies, mean_coh)
+    if len(seed_ts.shape) > 1:
+        ax[0].plot(conn_analyzer.frequencies, np.mean(mean_coh, axis=0))
+    else:
+        ax[0].plot(conn_analyzer.frequencies, mean_coh)
     ax[0].axvline(x=f_lb)
     ax[0].axvline(x=f_ub)
     ax[0].set_xlabel("Frequency (Hz)")
     ax[0].set_ylabel("Coherence")
 
-    ax[1].set_title("Coherence of each voxel with seed at different frequencies")
-    for i in range(conn_analyzer.coherence.shape[0]):
-        ax[1].plot(conn_analyzer.frequencies, conn_analyzer.coherence[i, :])
-    ax[1].axvline(x=f_lb)
-    ax[1].axvline(x=f_ub)
-    ax[1].set_xlabel("Frequency (Hz)")
-    ax[1].set_ylabel("Coherence")
+    # ax[1].set_title("Coherence of each voxel with seed at different frequencies")
+    # for i in range(conn_analyzer.coherence.shape[0]):
+    #     ax[1].plot(conn_analyzer.frequencies, conn_analyzer.coherence[i, :])
+    # ax[1].axvline(x=f_lb)
+    # ax[1].axvline(x=f_ub)
+    # ax[1].set_xlabel("Frequency (Hz)")
+    # ax[1].set_ylabel("Coherence")
 
-    ax[2].set_title(f"Histogram of voxel coherence values within band {f_lb} < f < {f_ub} (N={coh_by_voxel.shape[0]})")
-    ax[2].hist(coh_by_voxel)
-    ax[2].set_xlabel("Coherence")
+    ax[1].set_title(f"Histogram of voxel coherence values within band {f_lb} < f < {f_ub} (N={coh_by_voxel.shape[0]})")
+    ax[1].hist(coh_by_voxel)
+    ax[1].set_xlabel("Coherence")
+    ax[1].set_ylabel("# voxels")
+
+    ax[2].set_title(f"Histogram of voxel phase values within band {f_lb} < f < {f_ub} (N={coh_by_voxel.shape[0]})")
+    ax[2].hist(phase_by_voxel)
+    ax[2].set_xlabel("Relative phase")
     ax[2].set_ylabel("# voxels")
 
     plt.subplots_adjust(hspace=.3)
     plt.show()
     plt.close('all')
-    print(seed_ts.data.shape, target_ts.data.shape, conn_analyzer.coherence.shape, mean_coh.shape, mean_coh_bandpass.shape, coh_by_voxel.shape)
-    return conn_analyzer, coh_by_voxel
+    print(seed_ts.data.shape, target_ts.data.shape, conn_analyzer.coherence.shape, conn_analyzer.relative_phases.shape, mean_coh.shape, mean_coh_bandpass.shape, coh_by_voxel.shape)
+    return conn_analyzer, (coh_by_voxel, phase_by_voxel)
 
-def seed_coherence_analysis(bold, mask, seed_roi, TR, f_ub, f_lb, coh_fn, mean_seed=True, method=dict(NFFT=32)):
+def seed_coherence_analysis(bold, mask, seed_roi, TR, f_ub, f_lb, mean_seed=True, method=dict(NFFT=32)):
     """
     Given a bold file, brainmask, and seed ROI mask, do a seed coherence analysis.
     """
+    print(f"bold: {bold}\nmask: {mask}\nseed_roi: {seed_roi}")
     target_masker, target_ts = get_timeseries_from_file(bold, mask, TR, detrend=False, standardize=False, high_pass=f_lb, low_pass=f_ub)
     seed_masker, seed_ts = get_timeseries_from_file(bold, seed_roi, TR, detrend=False, standardize=False, high_pass=f_lb, low_pass=f_ub)
 
@@ -504,6 +536,93 @@ def seed_coherence_analysis(bold, mask, seed_roi, TR, f_ub, f_lb, coh_fn, mean_s
     else:
         n_seeds = seed_ts.data.shape[0]
 
-    conn_analyzer, coh_by_voxel = seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method)
+    conn_analyzer, (coh_by_voxel, phase_by_voxel) = seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method)
 
-    return conn_analyzer, target_masker
+    return conn_analyzer, target_masker, coh_by_voxel, phase_by_voxel
+
+
+## Functions for pRF
+def make_timeseries_for_prf(bolds):
+    """Takes a list of 4d nifti filenames, averages, cuts extra timepoints"""
+    for i, bold_file in enumerate(bolds):
+        img = load_img(bold_file)
+        data = get_data(img)
+        print(data.shape)
+        if i==0:
+            all_data = np.empty((*data.shape, len(bolds)))
+        all_data[:, :, :, :, i] = data
+    mean_timeseries = np.average(all_data, -1)
+    return nib.Nifti1Image(mean_timeseries[:, :, :, :138], img.affine)
+
+
+## Functions manipulating NIFTI images and FreeSurfer surfaces
+def threshold(what, by, at, out_dir, how='more'):
+    """Threshold a given prf output (what) by another (by, usually rsq) at a specific value"""
+    w = load_img(what)
+    b = load_img(by)
+    assert(w.shape == b.shape)
+    if how=='more':
+        mask = b.get_fdata() < at
+    elif how=='less':
+        mask = b.get_fdata() > at
+    marray = np.ma.masked_array(w.get_fdata(), mask)
+    out_data = np.ma.filled(marray, fill_value=0)
+    print(f"Thresholding {what} by {by} at thresh {at:.2f}...\n", 
+        mask.shape, out_data.shape, np.count_nonzero(mask), np.count_nonzero(out_data))
+    out_img = nib.Nifti1Image(out_data, w.affine)
+    parts_by = os.path.basename(by).split('_')
+    desc_by = [p for p in parts_by if 'desc' in p][0].split('-')[1] # gets whatever is after desc-
+    parts = os.path.basename(what).split('_')
+    parts.insert(-1, f"thresh-{desc_by}-{at:.2f}")
+    out_file = '_'.join(parts)
+    print(desc_by, parts, out_file, sep='\n')
+    nib.save(out_img, f"{out_dir}/{out_file}")
+
+def prf_to_anat(sub, brain_file, in_file, func2brain, out_dir):
+    # put space-anat in there, replacing space-* if it exists
+    parts = os.path.basename(in_file).split('_')
+    parts = [p if 'space-' not in p else 'space-anat' for p in parts]
+    if 'space-anat' not in parts:
+        parts.insert(-1, 'space-anat')
+    desc = [p for p in parts if 'desc' in p][0]
+    try:
+        thresh = [p for p in parts if 'thresh' in p][0]
+    except IndexError as inst:
+        thresh = 'nothresh'
+    outname = f"{desc}-{thresh}"
+    print(parts, outname)
+    out_file = '_'.join(parts)
+    cmd = f"flirt -ref {brain_file} -out {out_dir}/{out_file} -in {in_file} -init {func2brain} -interp nearestneighbour -applyxfm"
+    print('flirt cmd:\n', cmd)
+    print('fsleyes anat cmd:\n', f"fsleyes {brain_file} {out_dir}/{out_file}")
+    os.system(cmd)
+    for hemi in ("lh", "rh"):
+        cmd2 = f"mri_vol2surf --src {out_dir}/{out_file} --o {out_dir}/{hemi}.{outname}.mgz --hemi {hemi} --regheader {sub} --projfrac 0.5"
+        print(cmd2)
+        os.system(cmd2)
+
+def freeview_prfs(sub, hemi, prf_dir):
+    """View prfs on surface in freeview with good colormap"""
+    overlays = sorted(glob.glob(f"{prf_dir}/?h.desc-*.mgz"))
+    disp_overlays = [x for x in overlays if ('rho' in x or 'theta' in x) and f"{hemi}." in x]
+    print('\n'.join(disp_overlays))
+    hemi_surf = f"$SUBJECTS_DIR/{sub}/surf/{hemi}.inflated"
+    freeview_cmd = f"freeview -f {hemi_surf}"
+    for x in disp_overlays:
+        x_color = 'overlay_custom=0.01,255,0,0,1.57,125,255,0,3.14,0,255,255,4.71,125,0,255,6.28,255,0,0' if 'theta' in x else 'overlay_color=colorwheel'
+        freeview_cmd = freeview_cmd + f":overlay={x}:{x_color}"
+    print(freeview_cmd)
+
+## Functions for dealing with BIDS filenames
+def change_bids_description(this_epi, desc):
+    """Utility function that inserts or replaces a desc-{whatever} in a bids filename"""
+    epi_name = os.path.basename(this_epi)
+    epi_stub = epi_name.split('.')[0]
+    epi_stub_parts = epi_stub.split('_')
+    part = [(i, x) for i, x in enumerate(epi_stub_parts) if 'desc' in x]
+    if part:
+        epi_stub_parts[part[0][0]] = desc
+    else:
+        epi_stub_parts.insert(-1, desc)
+    epi_stub_mcf = '_'.join(epi_stub_parts)
+    return epi_stub_mcf
