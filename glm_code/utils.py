@@ -24,24 +24,7 @@ import nitime.analysis as nta
 import nitime.utils as ntu
 import nitime.viz as ntv
 
-# from fsleyes 0.32
-def isBIDSFile(filename, strict=True):
-    """Returns ``True`` if ``filename`` looks like a BIDS image or JSON file.
-
-    :arg filename: Name of file to check
-    :arg strict:   If ``True`` (the default), the file must be within a BIDS
-                   dataset directory, as defined by :func:`inBIDSDir`.
-    """
-    import re
-
-    name    = os.path.basename(filename)
-    pattern = r'([a-z0-9]+-[a-z0-9]+_)*([a-z0-9])+\.(nii|nii\.gz|json)'
-    flags   = re.ASCII | re.IGNORECASE
-    match   = re.fullmatch(pattern, name, flags) is not None
-    
-    print(name, match)
-    return match
-
+## functions for GLM implementation in nipype
 def write_hemifield_localizer_event_file(event_file):
     """Write hemifield localizer event file.
     
@@ -68,19 +51,6 @@ def write_hemifield_localizer_event_file(event_file):
     with open(event_file, 'w') as f:
         f.write(file_contents)
 
-def average_timeseries(bolds, masker):
-    """Given a list of bold file names and a NiftiMasker that has already been fit,
-    compute the mean across runs of the bold timeseries and return it"""
-    for i, bold_file in enumerate(bolds):
-        masked_bold_nm = masker.transform(bold_file)
-        if i==0: # first run
-            all_bolds = np.empty((*masked_bold_nm.shape, len(bolds)))
-        print(i, all_bolds.shape, masked_bold_nm.shape, masked_bold_nm.dtype, masked_bold_nm[:5, :5], sep="\n")
-        all_bolds[:, :, i] = masked_bold_nm
-    return np.average(all_bolds, axis=-1)
-
-
-## functions for GLM implementation in nipype
 def tsv2subjectinfo(events_file, confounds_file=None, exclude=None, trim_indices=None):
     """
     Function to go from events tsv + confounds tsv to subjectinfo,
@@ -372,12 +342,16 @@ def roi_stats(roi_dict, ref_vol_img):
         print("ROI max and min coords", roi_max_bounds, roi_min_bounds)
         #for i in range(roi_min_bounds[2], roi_max_bounds[2]+1)
         #    [roi_min_bounds[0]-1, roi_min_bounds[1]-1, i]
-        roi_extent = roi_max_bounds-roi_min_bounds
+        roi_extent = roi_max_bounds-roi_min_bounds+1
         print("ROI extent (total voxel span and max/min distance from center): ", roi_extent, roi_max_bounds-roi_center, roi_min_bounds-roi_center, sep='\n')
         print("ROI center in EPI and real-world coordinates: ", roi_center, M.dot(roi_center) + abc, sep='\n')
         print("****")
 
 def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_below_suffix='P', roi_above_suffix='M'):
+    """This function takes an roi mask (nifti) and a map of values (in this case, betas for GLM contrasts).
+    It looks at the values in the map within the ROI and identifies the specified (cut_pct) percentile.
+    It then assigns the voxels to one of two regions based on if they're above or below this value.
+    It also displays some graphs and stuff about this."""
     # first, figure out what the filenames of the new ROIs will be
     roi_stub = op.basename(roi).split('.')[0]
     roi_filename_parts = roi_stub.split('_')[:-2]
@@ -387,6 +361,7 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     roi_below_filename = f"{op.join(roi_dir, '_'.join([*roi_filename_parts, roi_below_name, 'roi']))}.nii.gz"
     roi_above_filename = f"{op.join(roi_dir, '_'.join([*roi_filename_parts, roi_above_name, 'roi']))}.nii.gz"
 
+    # get coordinates of roi, calculate bounds
     coords = np.argwhere(load_img(roi).get_fdata()!=0)
     roi_max_bounds = np.max(coords, 0)
     roi_min_bounds = np.min(coords, 0)
@@ -396,6 +371,7 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     roi_min_y = roi_min_bounds[1]
     roi_max_z = roi_max_bounds[2]
     roi_min_z = roi_min_bounds[2]
+    roi_extent_y = roi_max_y - roi_min_y + 1
     roi_extent_z = roi_max_z - roi_min_z + 1
 
     print(f"****\n****\nGiven the LGN mask \n{roi}\nwhich extends from {roi_max_bounds} to {roi_min_bounds}\nwill partition at {cut_pct}% and create\n{roi_below_filename}\n{roi_above_filename}", sep='\n')
@@ -436,8 +412,8 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     assert(len(roi_betas)==n_vox_above+n_vox_below)
     
     # fix/change this to not assume M/P
+    # also this could probably be refactored out into its own function that can be used elsewhere
     imgs_in_order = [load_img(roi_below_filename), load_img(roi_above_filename), load_img(beta_map)] #[load_img(roi_above_filename), load_img(roi_below_filename), beta_map]
-    fig, ax = plt.subplots(ncols=roi_extent_z, figsize=(16,6))
     img_data = [img.get_data() for img in imgs_in_order]
     p_roi, m_roi, beta_mp = img_data
     print([np.count_nonzero(x) for x in img_data])
@@ -448,25 +424,58 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     both_mask = np.logical_and(p_mask,m_mask)
     beta_masked = np.ma.masked_array(beta_mp, mask=both_mask)
     print([np.count_nonzero(~m) for m in [p_mask, m_mask, both_mask]])
-    ref_vol_data = ref_vol_img.get_data()
+    print(f"beta_masked: {beta_masked.shape}")
+
+    # display first set of slices (z) and include a narrow colorbar axis
+    gridspec = {'width_ratios': [1]*roi_extent_z + [0.1]}
+    fig, ax = plt.subplots(ncols=roi_extent_z+1, figsize=(16,6), gridspec_kw=gridspec)
     for ri in range(roi_extent_z):
-        #ax[ri].imshow(ref_vol_data[roi_min_x-2:roi_max_x+2,roi_min_y-2:roi_max_y+2,roi_max_z-ri], cmap="gray_r", alpha=0.3)
-        pos = ax[ri].imshow(beta_masked[roi_min_x-2:roi_max_x+2,roi_min_y-2:roi_max_y+2,roi_max_z-ri], cmap="coolwarm", clim=(roi_beta_min, roi_beta_max),
-            #norm=MidpointNormalize(midpoint=threshold, vmin=roi_beta_min, vmax=roi_beta_max))
-            norm=colors.DivergingNorm(vmin=roi_beta_min, vcenter=threshold, vmax=roi_beta_max))
+        # as of 2021-08-12, making this change to the orientation of the beta map to display correctly
+        to_show = np.fliplr(beta_masked[roi_min_x-2:roi_max_x+2,roi_min_y-2:roi_max_y+2,roi_max_z-ri].transpose())
+        #print(to_show.shape, np.count_nonzero(~to_show.mask))
+        pos = ax[ri].imshow(to_show, origin="lower",
+            cmap="coolwarm", clim=(roi_beta_min, roi_beta_max),
+            norm=colors.TwoSlopeNorm(vmin=roi_beta_min, vcenter=threshold, vmax=roi_beta_max))
         ax[ri].set_title(f"Slice {roi_max_z-ri}")
         ax[ri].set_xlabel(f"Left to Right")
         ax[ri].set_ylabel(f"Posterior to Anterior")
         ax[ri].set_xticks([])
         ax[ri].set_yticks([])
-    plt.colorbar(pos, ax=ax[ri])
-    plt.subplots_adjust(wspace=.2, hspace=.2)
+    plt.colorbar(pos, cax=ax[ri+1])
     plt.show()
     plt.close()
+
+    # display second set of slices with different orientation (y)
+    fig, ax = plt.subplots(ncols=roi_extent_y, figsize=(16,6))
+    for ri in range(roi_extent_y):
+        # as of 2021-08-12, making this change to the orientation of the beta map to display correctly
+        to_show = np.fliplr(beta_masked[roi_min_x-2:roi_max_x+2,roi_max_y-ri,roi_min_z-2:roi_max_z+2].transpose())
+        #print(to_show.shape, np.count_nonzero(~to_show.mask))
+        pos = ax[ri].imshow(to_show, origin="lower",
+            cmap="coolwarm", clim=(roi_beta_min, roi_beta_max),
+            norm=colors.TwoSlopeNorm(vmin=roi_beta_min, vcenter=threshold, vmax=roi_beta_max))
+        ax[ri].set_title(f"Slice {roi_max_y-ri}")
+        ax[ri].set_xlabel(f"Left to Right")
+        ax[ri].set_ylabel(f"Inferior to Superior")
+        ax[ri].set_xticks([])
+        ax[ri].set_yticks([])
+    plt.show()
+    plt.close('all')
     return above_mask, below_mask, threshold
 
 
 ## Functions for dealing with timeseries and doing coherence analysis
+def average_timeseries(bolds, masker):
+    """Given a list of bold file names and a NiftiMasker that has already been fit,
+    compute the mean across runs of the bold timeseries and return it"""
+    for i, bold_file in enumerate(bolds):
+        masked_bold_nm = masker.transform(bold_file)
+        if i==0: # first run
+            all_bolds = np.empty((*masked_bold_nm.shape, len(bolds)))
+        print(i, all_bolds.shape, masked_bold_nm.shape, masked_bold_nm.dtype, masked_bold_nm[:5, :5], sep="\n")
+        all_bolds[:, :, i] = masked_bold_nm
+    return np.average(all_bolds, axis=-1)
+
 def get_timeseries_from_file(bold, mask, TR, **kwargs):
     """
     Given a bold file and roi mask, return a nitime TimeSeries object
@@ -614,6 +623,24 @@ def freeview_prfs(sub, hemi, prf_dir):
     print(freeview_cmd)
 
 ## Functions for dealing with BIDS filenames
+# from fsleyes 0.32
+def isBIDSFile(filename, strict=True):
+    """Returns ``True`` if ``filename`` looks like a BIDS image or JSON file.
+
+    :arg filename: Name of file to check
+    :arg strict:   If ``True`` (the default), the file must be within a BIDS
+                   dataset directory, as defined by :func:`inBIDSDir`.
+    """
+    import re
+
+    name    = os.path.basename(filename)
+    pattern = r'([a-z0-9]+-[a-z0-9]+_)*([a-z0-9])+\.(nii|nii\.gz|json)'
+    flags   = re.ASCII | re.IGNORECASE
+    match   = re.fullmatch(pattern, name, flags) is not None
+    
+    print(name, match)
+    return match
+
 def change_bids_description(this_epi, desc):
     """Utility function that inserts or replaces a desc-{whatever} in a bids filename"""
     epi_name = os.path.basename(this_epi)
