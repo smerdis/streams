@@ -196,7 +196,7 @@ def get_files(subject_id, session, task, raw_data_dir, preprocessed_data_dir, sp
     raw_bolds = sorted(raw_layout.get(subject=subject_id, suffix='bold',
                                     task=task, session=session, run=run, extension=['nii.gz'],
                                     return_type='file'))
-    TRs = [raw_layout.get_tr(f) for f in raw_bolds]
+    TRs = [raw_layout.get_metadata(f)['RepetitionTime'] for f in raw_bolds]
     print(TRs, len(TRs))
     confounds = sorted(preproc_layout.get(subject=subject_id, suffix="regressors",
                                   task=task, session=session, run=run, extension=['tsv'], 
@@ -308,7 +308,6 @@ def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
 
 ## Functions for dealing with rois
 def roi_centers(big_roi_fn, subdivision_rois_fns, ref_vol_img):
-    np.set_printoptions(precision=3)
     M = ref_vol_img.affine[:3, :3]
     abc = ref_vol_img.affine[:3, 3]
     big_roi = load_img(big_roi_fn)
@@ -347,32 +346,29 @@ def roi_stats(roi_dict, ref_vol_img):
         print("ROI center in EPI and real-world coordinates: ", roi_center, M.dot(roi_center) + abc, sep='\n')
         print("****")
 
-def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_below_suffix='P', roi_above_suffix='M'):
-    """This function takes an roi mask (nifti) and a map of values (in this case, betas for GLM contrasts).
+def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi=None, roi_below_suffix='P', roi_above_suffix='M'):
+    """This function takes an roi mask (nifti) and a map of values (originally betas for GLM contrasts but could also be pRF results etc).
     It looks at the values in the map within the ROI and identifies the specified (cut_pct) percentile.
     It then assigns the voxels to one of two regions based on if they're above or below this value.
     It also displays some graphs and stuff about this."""
     # first, figure out what the filenames of the new ROIs will be
     roi_stub = op.basename(roi).split('.')[0]
-    roi_filename_parts = roi_stub.split('_')[:-2]
+    roi_stub_parts = roi_stub.split('_')
+    desc = [(i, x) for i, x in enumerate(roi_stub_parts) if 'desc-' in x]
+    # desc[0][0] = index of description part in list of parts
+    # desc[0][1] = actual desc-whatever
     roi_dir = op.dirname(roi)
-    roi_below_name = f"{roi_stub.split('_')[-2]}{roi_below_suffix}{cut_pct}"
-    roi_above_name = f"{roi_stub.split('_')[-2]}{roi_above_suffix}{cut_pct}"
-    roi_below_filename = f"{op.join(roi_dir, '_'.join([*roi_filename_parts, roi_below_name, 'roi']))}.nii.gz"
-    roi_above_filename = f"{op.join(roi_dir, '_'.join([*roi_filename_parts, roi_above_name, 'roi']))}.nii.gz"
+    # desc-LLGN -> desc-LLGNM80 or whatever
+    roi_below_name = f"{desc[0][1]}{roi_below_suffix}{cut_pct}"
+    roi_above_name = f"{desc[0][1]}{roi_above_suffix}{cut_pct}"
+    #print(roi_stub, roi_stub_parts, desc, roi_above_name, roi_below_name)
+    roi_below_filename = f"{op.join(roi_dir, '_'.join([*roi_stub_parts[:desc[0][0]], roi_below_name, *roi_stub_parts[desc[0][0]+1:]]))}.nii.gz"
+    roi_above_filename = f"{op.join(roi_dir, '_'.join([*roi_stub_parts[:desc[0][0]], roi_above_name, *roi_stub_parts[desc[0][0]+1:]]))}.nii.gz"
 
     # get coordinates of roi, calculate bounds
     coords = np.argwhere(load_img(roi).get_fdata()!=0)
     roi_max_bounds = np.max(coords, 0)
     roi_min_bounds = np.min(coords, 0)
-    roi_max_x = roi_max_bounds[0]
-    roi_min_x = roi_min_bounds[0]
-    roi_max_y = roi_max_bounds[1]
-    roi_min_y = roi_min_bounds[1]
-    roi_max_z = roi_max_bounds[2]
-    roi_min_z = roi_min_bounds[2]
-    roi_extent_y = roi_max_y - roi_min_y + 1
-    roi_extent_z = roi_max_z - roi_min_z + 1
 
     print(f"****\n****\nGiven the LGN mask \n{roi}\nwhich extends from {roi_max_bounds} to {roi_min_bounds}\nwill partition at {cut_pct}% and create\n{roi_below_filename}\n{roi_above_filename}", sep='\n')
 
@@ -425,6 +421,18 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi, roi_b
     beta_masked = np.ma.masked_array(beta_mp, mask=both_mask)
     print([np.count_nonzero(~m) for m in [p_mask, m_mask, both_mask]])
     print(f"beta_masked: {beta_masked.shape}")
+
+    # gets the coordinates of unmasked voxels
+    xs, ys, zs = beta_masked.nonzero()
+
+    roi_min_x = np.min(xs)
+    roi_min_y = np.min(ys)
+    roi_max_x = np.max(xs)
+    roi_max_y = np.max(ys)
+    roi_min_z = np.min(zs)
+    roi_max_z = np.max(zs)
+    roi_extent_y = roi_max_y - roi_min_y + 1
+    roi_extent_z = roi_max_z - roi_min_z + 1
 
     # display first set of slices (z) and include a narrow colorbar axis
     gridspec = {'width_ratios': [1]*roi_extent_z + [0.1]}
@@ -641,15 +649,17 @@ def isBIDSFile(filename, strict=True):
     print(name, match)
     return match
 
-def change_bids_description(this_epi, desc):
-    """Utility function that inserts or replaces a desc-{whatever} in a bids filename"""
+def change_bids_description(this_epi, desc, slug='desc', pos_if_not_exist=-1):
+    """Utility function that inserts or replaces a desc-{whatever} in a bids filename
+
+    2021-09-13: slug param allows any part to be replaced, not just desc-<whatever>"""
     epi_name = os.path.basename(this_epi)
     epi_stub = epi_name.split('.')[0]
     epi_stub_parts = epi_stub.split('_')
-    part = [(i, x) for i, x in enumerate(epi_stub_parts) if 'desc' in x]
+    part = [(i, x) for i, x in enumerate(epi_stub_parts) if slug in x]
     if part:
         epi_stub_parts[part[0][0]] = desc
     else:
-        epi_stub_parts.insert(-1, desc)
+        epi_stub_parts.insert(pos_if_not_exist, desc)
     epi_stub_mcf = '_'.join(epi_stub_parts)
     return epi_stub_mcf
