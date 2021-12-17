@@ -3,6 +3,20 @@
 import os, glob
 import os.path as op
 
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+consoleHandler = logging.StreamHandler()
+consoleHandler.setLevel(logging.DEBUG)
+fileHandler = logging.FileHandler('sub-LL_analysis.log')
+fileHandler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+consoleHandler.setFormatter(formatter)
+fileHandler.setFormatter(formatter)
+logger.addHandler(consoleHandler)
+logger.addHandler(fileHandler)
+logger.setLevel(logging.DEBUG)
+
 import numpy as np
 import pandas as pd
 
@@ -14,7 +28,7 @@ import nibabel as nib
 import nilearn
 from nilearn.masking import apply_mask
 from nilearn.plotting import plot_img, plot_epi, plot_roi, plot_stat_map, view_img, plot_anat
-from nilearn.image import get_data, index_img, load_img, threshold_img, math_img, resample_to_img, new_img_like
+from nilearn.image import get_data, index_img, load_img, threshold_img, math_img, resample_to_img, new_img_like, coord_transform
 from nilearn.input_data import NiftiMasker
 
 import nitime
@@ -235,7 +249,7 @@ def get_contrasts(task):
         return [cont_mp, cont_pm, cont_visresp]
 
 
-def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir_suffix = None, space = None):
+def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir_suffix = None, space = None, **kwargs):
     """Run the fixed effects glm, given some parameters.
 
     Return the working directory for this glm run"""
@@ -261,12 +275,16 @@ def run_fixedeffects_glm(sub, ses, task, run, raw_data_dir, out_dir, working_dir
     glm.modelfit.inputs.level1design.contrasts = contrasts
 
     # How many volumes to trim from the functional run before masking and preprocessing
-    if task=="mp":
-        trim_idxs = (4, 0) # Should be 4 0 for MP
-    elif task=="hemi":
-        trim_idxs = (6, -1) # 6 at the front, 1 at the back, for hemifield. 
-    else:
-        assert("Unknown task and thus trim indices!")
+    try:
+        trim_idxs = kwargs.get('trim_idxs')
+        assert(trim_idxs is not None)
+    except KeyError:
+        print("Trim indices not provided, will use defaults")
+        if task=="mp":
+            trim_idxs = (4, 0) # Should be 4 0 for MP when 139 2.25s TRs acquired
+        elif task=="hemi":
+            trim_idxs = (6, -1) # 6 at the front, 1 at the back, for hemifield. 
+
     glm.modelfit.inputs.tsv2subjinfo.trim_indices = trim_idxs
     glm.modelfit.inputs.trim.begin_index = trim_idxs[0]
     glm.modelfit.inputs.trim.end_index = trim_idxs[1]
@@ -307,6 +325,43 @@ def view_results(datasink_dir, contrast_number, anat, func, vROI=''):
 
 
 ## Functions for dealing with rois
+
+def roi_map_scatter(roi, beta_map, ref_vol_img):
+    # get coordinates of roi, calculate bounds
+    coords = np.argwhere(load_img(roi).get_fdata()!=0)
+    roi_max_bounds = np.max(coords, 0)
+    roi_min_bounds = np.min(coords, 0)
+    roi_center_native = np.mean(coords, 0)
+    roi_center_ras = coord_transform(*roi_center_native, ref_vol_img.affine)
+
+    print(f"****\n{roi} extends from {roi_max_bounds} to {roi_min_bounds} and is centered at:\n{roi_center_native} (native) = {roi_center_ras} (RAS)", sep='\n')
+
+    # mask the beta map with the roi mask
+    beta_masker = NiftiMasker(mask_img=roi)
+    roi_betas = beta_masker.fit_transform(beta_map)[0]
+    roi_beta_min = np.min(roi_betas)
+    roi_beta_max = np.max(roi_betas)
+
+    print(coords.shape, roi_betas.shape)
+    coords_ras = np.array(coord_transform(coords[:, 0], coords[:, 1], coords[:, 2], ref_vol_img.affine))
+
+    plt.scatter(coords_ras[0, :], roi_betas)
+    plt.xlabel("Left - Right")
+    plt.ylabel(f"{op.basename(beta_map)}")
+    plt.show()
+    plt.close()
+    plt.scatter(coords_ras[1, :], roi_betas)
+    plt.xlabel("Posterior - Anterior")
+    plt.ylabel(f"{op.basename(beta_map)}")
+    plt.show()
+    plt.close()
+    # plot histogram of beta values within roi mask
+    plt.scatter(coords_ras[2, :], roi_betas)
+    plt.xlabel("Inferior - Superior")
+    plt.ylabel(f"{op.basename(beta_map)}")
+    plt.show()
+    plt.close()
+
 def roi_centers(big_roi_fn, subdivision_rois_fns, ref_vol_img):
     M = ref_vol_img.affine[:3, :3]
     abc = ref_vol_img.affine[:3, 3]
@@ -327,6 +382,8 @@ def roi_centers(big_roi_fn, subdivision_rois_fns, ref_vol_img):
         ax.set_xlabel("Proportion of LGN extent (L-R)")
         ax.set_ylabel("Proportion of LGN extent (Ventral - Dorsal)")
         print(fn, roi_center, roi_center_proportion, sep='\n')
+    plt.show()
+    plt.close('all')
 
 def roi_stats(roi_dict, ref_vol_img):
     M = ref_vol_img.affine[:3, :3]
@@ -396,7 +453,7 @@ def assign_roi_percentile(roi, beta_map, cut_pct, ref_vol_img, which_hemi=None, 
     roi_nilearn_neg = threshold_img(math_img(f"-img", img=beta_map), threshold=(-1*threshold), mask_img=roi)
     # exclude the zero voxels (not in the roi mask)
     above_mask = math_img(f"np.logical_and((img != 0), (img > {threshold}))", img=roi_nilearn)
-    below_mask = math_img(f"np.logical_and((img != 0), (img > {-1*threshold}))", img=roi_nilearn_neg)
+    below_mask = math_img(f"np.logical_and((img != 0), (img >= {-1*threshold}))", img=roi_nilearn_neg)
     n_vox_above = np.count_nonzero(above_mask.get_data())
     n_vox_below = np.count_nonzero(below_mask.get_data())
 
@@ -494,7 +551,7 @@ def get_timeseries_from_file(bold, mask, TR, **kwargs):
 def seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method=dict(NFFT=32)):
     conn_analyzer = nta.SeedCoherenceAnalyzer(seed_ts, target_ts, method=method)
     freq_idx = np.where((conn_analyzer.frequencies > f_lb) * (conn_analyzer.frequencies < f_ub))[0]
-    print(f"Seed timeseries has shape: {seed_ts.shape}\nLooking at freq bins centered on: {conn_analyzer.frequencies[freq_idx]}")
+    logger.debug(f"Seed timeseries has shape: {seed_ts.shape}\nLooking at freq bins centered on: {conn_analyzer.frequencies[freq_idx]}")
     # mean coherence across voxels in each freq bin
     mean_coh = np.mean(conn_analyzer.coherence, axis=0)
     # mean coherence across voxels in freq bins of interest
@@ -536,14 +593,16 @@ def seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method=dict(NFFT=3
     plt.subplots_adjust(hspace=.3)
     plt.show()
     plt.close('all')
-    print(seed_ts.data.shape, target_ts.data.shape, conn_analyzer.coherence.shape, conn_analyzer.relative_phases.shape, mean_coh.shape, mean_coh_bandpass.shape, coh_by_voxel.shape)
+    logger.debug((f"seed_ts: {seed_ts.data.shape}\n"
+        f"target_ts: {target_ts.data.shape}\n{conn_analyzer.coherence.shape}\n{conn_analyzer.relative_phases.shape},"
+        f"{mean_coh.shape}, {mean_coh_bandpass.shape}, {coh_by_voxel.shape}"))
     return conn_analyzer, (coh_by_voxel, phase_by_voxel)
 
 def seed_coherence_analysis(bold, mask, seed_roi, TR, f_ub, f_lb, mean_seed=True, method=dict(NFFT=32)):
     """
     Given a bold file, brainmask, and seed ROI mask, do a seed coherence analysis.
     """
-    print(f"bold: {bold}\nmask: {mask}\nseed_roi: {seed_roi}")
+    logger.debug(f"bold: {bold}\nmask: {mask}\nseed_roi: {seed_roi}")
     target_masker, target_ts = get_timeseries_from_file(bold, mask, TR, detrend=False, standardize=False, high_pass=f_lb, low_pass=f_ub)
     seed_masker, seed_ts = get_timeseries_from_file(bold, seed_roi, TR, detrend=False, standardize=False, high_pass=f_lb, low_pass=f_ub)
 
@@ -555,6 +614,7 @@ def seed_coherence_analysis(bold, mask, seed_roi, TR, f_ub, f_lb, mean_seed=True
 
     conn_analyzer, (coh_by_voxel, phase_by_voxel) = seed_coherence_timeseries(seed_ts, target_ts, f_ub, f_lb, method)
 
+    logger.debug("seed_coherence_analysis() about to return...")
     return conn_analyzer, target_masker, coh_by_voxel, phase_by_voxel
 
 
@@ -630,6 +690,23 @@ def freeview_prfs(sub, hemi, prf_dir):
         freeview_cmd = freeview_cmd + f":overlay={x}:{x_color}"
     print(freeview_cmd)
 
+def make_func_parc_mask(ribbon_nii, parc_codes, func_ref_vol_path, out_fn, xfm_path):
+    # Load ribbon file, get voxels identified by parc_codes
+    ribbon_img = load_img(ribbon_nii)
+    ribbon_data = ribbon_img.get_fdata()
+    cortex_mask = np.zeros_like(ribbon_data)
+    print(np.count_nonzero(cortex_mask))
+    for c in parc_codes:
+        cortex_mask[ribbon_data==c] = 1
+    print(np.count_nonzero(cortex_mask))
+    # save these voxels as a binarized mask in the original space and resolution (T1)
+    cortex_mask_img = nib.Nifti1Image(cortex_mask, ribbon_img.affine)
+    out_fn_t1 = f"{op.dirname(out_fn)}/{change_bids_description(out_fn, 'space-T1w', 'space')}.nii.gz"
+    nib.save(cortex_mask_img, out_fn_t1)
+    cmd = f"flirt -ref {func_ref_vol_path} -in {out_fn_t1} -out {out_fn} -init {xfm_path} -applyxfm"
+    print(cmd)
+    os.system(cmd)
+
 ## Functions for dealing with BIDS filenames
 # from fsleyes 0.32
 def isBIDSFile(filename, strict=True):
@@ -663,3 +740,46 @@ def change_bids_description(this_epi, desc, slug='desc', pos_if_not_exist=-1):
         epi_stub_parts.insert(pos_if_not_exist, desc)
     epi_stub_mcf = '_'.join(epi_stub_parts)
     return epi_stub_mcf
+
+def get_bids_part(fn, part):
+    bn = op.basename(fn)
+    parts = bn.split('_')
+    return [p for p in parts if part in p][0]
+
+def epireg_func_to_anat(epi, t1, t1_brain, wmseg_nii, out, xfm, inverse):
+    epireg_cmd = (f"epi_reg -v --epi={epi} --t1={t1} "
+                  f"--t1brain={t1_brain} --wmseg={wmseg_nii} --out={out}")
+    print(epireg_cmd, os.system(epireg_cmd))
+
+    inverse_cmd = f"convert_xfm -omat {inverse} -inverse {out}.mat && cp {out}.mat {xfm}"
+    print(inverse_cmd, os.system(inverse_cmd))
+
+def convert_label_to_vol(label_fn, sub, freesurfer_dir, template_fn, reg_mat, hemi, output_name):
+    if reg_mat == "identity":
+        reg_option = "--identity"
+    elif op.exists(reg_mat):
+        reg_option = f"--reg {reg_mat}"
+    else:
+        raise ValueError("Must provide a valid registration matrix or 'identity'")
+    os.putenv('SUBJECTS_DIR', f"{freesurfer_dir}")
+    cmd = (f"mri_label2vol --label {label_fn} --subject {sub} --temp {template_fn} "
+           f"{reg_option} --hemi {hemi} --proj frac 0 1 .1 --o {output_name} "
+           f"&& fslswapdim {output_name} x z -y {output_name} ")
+    logger.debug(cmd)
+    logger.debug(f"exited with status {os.system(cmd)}")
+
+def convert_labels(labels, sub, out_dir, template_fn, freesurfer_dir, reg_mat="identity", space="T1w"):
+    for l in labels:
+        parts = op.basename(l).split('.')
+        if parts[0] in ('lh','rh'):
+            hemi = parts[0]
+            hemi_LR = hemi[0].upper()
+        else:
+            raise ValueError("hemi is neither lh nor rh!")
+        roi_name = parts[1]
+        # space should change depending on if reg_mat is "identity" (T1w)
+        # or something else (a functional space, probably - need a label to be passed in)
+        out_fn_stub = f"{out_dir}/sub-{sub}_desc-{hemi_LR}{roi_name}_space-{space}"
+        out_fn = f"{out_fn_stub}_roi.nii.gz"
+        logger.debug(f"{parts}, {hemi}, {roi_name}")
+        convert_label_to_vol(l, sub, freesurfer_dir, template_fn, reg_mat, hemi, out_fn)
